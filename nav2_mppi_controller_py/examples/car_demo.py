@@ -157,7 +157,7 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--dt", type=float, default=0.05, help="Controller time step [s]")
-    parser.add_argument("--steps", type=int, default=480, help="Simulation steps to roll out")
+    parser.add_argument("--steps", type=int, default=960, help="Simulation steps to roll out")
     parser.add_argument("--radius", type=float, default=2.0, help="Reference path radius/scale")
     parser.add_argument(
         "--path-shape",

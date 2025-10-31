@@ -103,6 +103,18 @@ deviations `(sigma_vx, sigma_vy, sigma_wz)` for the linear and angular
 velocities.  These parameters shape the exploration radius in control space.
 When the vehicle is non-holonomic, the `vy` component is set to zero.
 
+### 2.3 Explanation of Terms in \(S^{(i)}\)
+
+The cost-to-go \(S^{(i)}\) consists of three main components:
+
+- \(\phi\!\left(x^{(i)}_T\right)\): The terminal cost, evaluating the cost of the trajectory's final state \(x^{(i)}_T\). This typically ensures the robot reaches the goal or satisfies terminal constraints.
+
+- \(\sum_{k=0}^{T-1} q\!\left(x^{(i)}_k, u^{(i)}_k\right)\): The running cost, the cumulative cost over the planning horizon for each state \(x^{(i)}_k\) and control \(u^{(i)}_k\). This includes objectives like path following, obstacle avoidance, and velocity constraints.
+
+- \(\sum_{k=0}^{T-1} \tfrac{\gamma}{2} \left(\epsilon^{(i)}_k\right)^{\!\top} R^{-1} \epsilon^{(i)}_k\): The control cost, penalizing the control noise \(\epsilon^{(i)}_k\). Here, \(R = \Sigma / \lambda\) acts as the control cost matrix, \(\lambda\) is the temperature parameter, and \(\gamma\) scales the penalty. This term promotes smooth and constrained control inputs, preventing overly aggressive actions.
+
+These components ensure the optimization balances trajectory quality with control stability.
+
 ## 3. Structure of the Python Package
 
 The Python package mirrors the layout of the C++ controller:
