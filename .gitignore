@@ -57,3 +57,4 @@ doc/html/
 *.gif
 nav2_mppi_controller_py/nav2_mppi_controller_py.egg-info
 nav2_mppi_controller_py/resource/nav2_mppi_controller_py
+.cache
