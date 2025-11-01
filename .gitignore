@@ -58,3 +58,4 @@ doc/html/
 nav2_mppi_controller_py/nav2_mppi_controller_py.egg-info
 nav2_mppi_controller_py/resource/nav2_mppi_controller_py
 .cache
+compile_commands.json
