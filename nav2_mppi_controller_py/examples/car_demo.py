@@ -52,8 +52,8 @@ def create_settings(
     return settings
 
 
-def prune_path(plan, pose: Pose, look_ahead: int) -> object:
-    """Return a pruned copy of the plan keeping a few poses ahead of the robot."""
+def prune_path(plan, pose: Pose, look_ahead: int, dt: float = 0.05, v_ref: float = 0.5) -> object:
+    """Return a pruned copy of the plan keeping poses within a time horizon ahead of the robot."""
     if not plan.poses:
         return plan
 
@@ -62,9 +62,25 @@ def prune_path(plan, pose: Pose, look_ahead: int) -> object:
     dists = np.linalg.norm(positions - robot_xy, axis=1)
     idx = int(np.argmin(dists))
 
-    trimmed = plan.poses[idx : idx + max(look_ahead, 1)]
+    # Calculate distances between consecutive poses
+    if len(positions) > 1:
+        deltas = np.linalg.norm(np.diff(positions, axis=0), axis=1)
+        # Assume constant reference speed to estimate time per pose
+        dt_per_pose = deltas / v_ref
+        cumulative_time = np.cumsum(dt_per_pose)
+        # Find how many poses fit within look_ahead time (look_ahead here is time in seconds)
+        max_time = look_ahead  # look_ahead is now time horizon
+        pose_indices = np.where(cumulative_time <= max_time)[0]
+        if len(pose_indices) > 0:
+            end_idx = idx + pose_indices[-1] + 1  # +1 because cumsum starts from idx+1
+        else:
+            end_idx = idx + 1
+    else:
+        end_idx = idx + 1
+
+    trimmed = plan.poses[idx:end_idx]
     if not trimmed:
-        trimmed = plan.poses[idx:]
+        trimmed = [plan.poses[idx]]  # At least keep current pose
 
     new_plan = type(plan)()
     new_plan.header = plan.header
@@ -94,19 +110,35 @@ def simulate(
     twist: Twist,
     steps: int,
     dt: float,
-    look_ahead: int,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    look_ahead: float,
+    v_ref: float = 0.5,
+    horizon_steps: int = 40,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, list, list]:
     positions: list[Tuple[float, float]] = []
     headings: list[float] = []
     velocities: list[float] = []
+    predicted_trajectories: list[np.ndarray] = []
+    plan_windows: list[list] = []
 
     for _ in range(steps):
-        plan_window = prune_path(path, pose, look_ahead=look_ahead)
+        plan_window = prune_path(path, pose, look_ahead=look_ahead, dt=dt, v_ref=v_ref)
         controller.set_plan(plan_window)
         cmd = controller.compute_velocity_command(pose, twist)
 
         vx = cmd.twist.linear.x
         wz = cmd.twist.angular.z
+
+        # Simulate predicted trajectory assuming constant control for horizon
+        pred_positions = []
+        pred_yaw = yaw_from_quaternion(pose.orientation)
+        pred_x = pose.position.x
+        pred_y = pose.position.y
+        for _ in range(horizon_steps):
+            pred_yaw += wz * dt
+            pred_x += math.cos(pred_yaw) * vx * dt
+            pred_y += math.sin(pred_yaw) * vx * dt
+            pred_positions.append((pred_x, pred_y))
+        predicted_trajectories.append(np.array(pred_positions))
 
         yaw = yaw_from_quaternion(pose.orientation)
         yaw += wz * dt
@@ -121,7 +153,9 @@ def simulate(
         headings.append(yaw)
         velocities.append(vx)
 
-    return np.asarray(positions), np.asarray(headings), np.asarray(velocities)
+        plan_windows.append([(p.pose.position.x, p.pose.position.y) for p in plan_window.poses])
+
+    return np.asarray(positions), np.asarray(headings), np.asarray(velocities), predicted_trajectories, plan_windows
 
 
 def build_controller(settings: OptimizerSettings) -> MPPIController:
@@ -157,7 +191,7 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--dt", type=float, default=0.05, help="Controller time step [s]")
-    parser.add_argument("--steps", type=int, default=960, help="Simulation steps to roll out")
+    parser.add_argument("--steps", type=int, default=360, help="Simulation steps to roll out")
     parser.add_argument("--radius", type=float, default=2.0, help="Reference path radius/scale")
     parser.add_argument(
         "--path-shape",
@@ -165,7 +199,7 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         default="circle",
         help="Reference path geometry",
     )
-    parser.add_argument("--look-ahead", type=int, default=12, help="Number of poses kept when pruning the plan")
+    parser.add_argument("--look-ahead", type=float, default=2.0, help="Time horizon [s] for pruning the plan")
     parser.add_argument("--batch-size", type=int, default=512, help="MPPI batch size")
     parser.add_argument("--time-steps", type=int, default=40, help="MPPI horizon length")
     parser.add_argument("--iterations", type=int, default=2, help="MPPI optimisation iterations per cycle")
@@ -179,6 +213,7 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
     )
     parser.add_argument("--no-save", action="store_true", help="Skip saving the animation to disk")
     parser.add_argument("--show", action="store_true", help="Display the animation window")
+    parser.add_argument("--v-ref", type=float, default=0.5, help="Reference speed [m/s] for time-based pruning")
     args = parser.parse_args(list(argv) if argv else None)
 
     np.random.seed(args.seed)
@@ -204,7 +239,7 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
 
     twist = Twist()
 
-    positions, headings, velocities = simulate(
+    positions, headings, velocities, predicted_trajectories, plan_windows = simulate(
         controller,
         path,
         pose,
@@ -212,34 +247,59 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         steps=args.steps,
         dt=args.dt,
         look_ahead=args.look_ahead,
+        v_ref=args.v_ref,
+        horizon_steps=args.time_steps,
     )
 
     fig, ax = plt.subplots(figsize=(6, 6))
     ax.set_aspect("equal")
     ax.plot(xs, ys, "k--", label="Reference path")
+    # Mark the end position and orientation
+    end_x, end_y = xs[-1], ys[-1]
+    if len(xs) > 1:
+        dx = xs[-1] - xs[-2]
+        dy = ys[-1] - ys[-2]
+        end_yaw = math.atan2(dy, dx)
+        arrow_length = 0.5
+        ax.arrow(end_x, end_y, arrow_length * math.cos(end_yaw), arrow_length * math.sin(end_yaw),
+                 head_width=0.1, head_length=0.1, fc='purple', ec='purple', label="End orientation")
+    ax.plot(end_x, end_y, 'ko', markersize=8, label="End position")
     (robot_path_plot,) = ax.plot([], [], "r-", linewidth=2, label="MPPI trajectory")
+    (predicted_path_plot,) = ax.plot([], [], "b--", linewidth=1, label="Predicted trajectory")
+    (plan_window_plot,) = ax.plot([], [], "g-", linewidth=1.5, label="Plan window")
     vehicle_length = 0.5
     vehicle_width = 0.3
     (vehicle_body,) = ax.fill([], [], color='red', alpha=0.5, label="Vehicle")
     ax.set_xlim(xs.min() - 1.0, xs.max() + 1.0)
     ax.set_ylim(ys.min() - 1.0, ys.max() + 1.0)
-    ax.legend()
+    ax.legend(loc='upper left', bbox_to_anchor=(1, 1))
     ax.set_title("nav2_mppi_controller_py demo")
 
     def init():
         robot_path_plot.set_data([], [])
+        predicted_path_plot.set_data([], [])
+        plan_window_plot.set_data([], [])
         vehicle_body.set_xy(np.empty((0, 2)))
-        return robot_path_plot, vehicle_body
+        return robot_path_plot, predicted_path_plot, plan_window_plot, vehicle_body
 
     def update(frame):
         robot_path_plot.set_data(positions[: frame + 1, 0], positions[: frame + 1, 1])
+        if frame < len(predicted_trajectories):
+            pred_pos = predicted_trajectories[frame]
+            predicted_path_plot.set_data(pred_pos[:, 0], pred_pos[:, 1])
+        if frame < len(plan_windows):
+            pw_pos = np.array(plan_windows[frame])
+            if len(pw_pos) > 0:
+                plan_window_plot.set_data(pw_pos[:, 0], pw_pos[:, 1])
+            else:
+                plan_window_plot.set_data([], [])
         x = positions[frame, 0]
         y = positions[frame, 1]
         yaw = float(headings[frame])
         corners = get_vehicle_corners(x, y, yaw, vehicle_length, vehicle_width)
         corners_array = np.array(corners)
         vehicle_body.set_xy(corners_array)
-        return robot_path_plot, vehicle_body
+        return robot_path_plot, predicted_path_plot, plan_window_plot, vehicle_body
 
     ani = animation.FuncAnimation(
         fig,
