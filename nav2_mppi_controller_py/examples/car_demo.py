@@ -111,14 +111,17 @@ def simulate(
     steps: int,
     dt: float,
     look_ahead: float,
+    path_xs: np.ndarray,
+    path_ys: np.ndarray,
     v_ref: float = 0.5,
     horizon_steps: int = 40,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, list, list]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, list, list, list]:
     positions: list[Tuple[float, float]] = []
     headings: list[float] = []
     velocities: list[float] = []
     predicted_trajectories: list[np.ndarray] = []
     plan_windows: list[list] = []
+    nearest_points: list[Tuple[float, float]] = []
 
     for _ in range(steps):
         plan_window = prune_path(path, pose, look_ahead=look_ahead, dt=dt, v_ref=v_ref)
@@ -154,8 +157,12 @@ def simulate(
         velocities.append(vx)
 
         plan_windows.append([(p.pose.position.x, p.pose.position.y) for p in plan_window.poses])
+        
+        # Find nearest point on the reference path
+        nearest_pt = get_nearest_path_point((pose.position.x, pose.position.y), path_xs, path_ys)
+        nearest_points.append(nearest_pt)
 
-    return np.asarray(positions), np.asarray(headings), np.asarray(velocities), predicted_trajectories, plan_windows
+    return np.asarray(positions), np.asarray(headings), np.asarray(velocities), predicted_trajectories, plan_windows, nearest_points
 
 
 def build_controller(settings: OptimizerSettings) -> MPPIController:
@@ -185,6 +192,15 @@ def get_vehicle_corners(x: float, y: float, yaw: float, length: float, width: fl
     return corners
 
 
+def get_nearest_path_point(robot_pos: Tuple[float, float], path_xs: np.ndarray, path_ys: np.ndarray) -> Tuple[float, float]:
+    """Find the nearest point on the reference path to the robot's current position."""
+    robot_xy = np.array(robot_pos)
+    path_positions = np.column_stack([path_xs, path_ys])
+    dists = np.linalg.norm(path_positions - robot_xy, axis=1)
+    nearest_idx = int(np.argmin(dists))
+    return path_xs[nearest_idx], path_ys[nearest_idx]
+
+
 def run_demo(argv: Iterable[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description="Pure-Python MPPI car demo.",
@@ -199,7 +215,7 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         default="circle",
         help="Reference path geometry",
     )
-    parser.add_argument("--look-ahead", type=float, default=2.0, help="Time horizon [s] for pruning the plan")
+    parser.add_argument("--look-ahead", type=float, default=8.0, help="Time horizon [s] for pruning the plan")
     parser.add_argument("--batch-size", type=int, default=512, help="MPPI batch size")
     parser.add_argument("--time-steps", type=int, default=40, help="MPPI horizon length")
     parser.add_argument("--iterations", type=int, default=2, help="MPPI optimisation iterations per cycle")
@@ -239,7 +255,7 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
 
     twist = Twist()
 
-    positions, headings, velocities, predicted_trajectories, plan_windows = simulate(
+    positions, headings, velocities, predicted_trajectories, plan_windows, nearest_points = simulate(
         controller,
         path,
         pose,
@@ -247,13 +263,15 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         steps=args.steps,
         dt=args.dt,
         look_ahead=args.look_ahead,
+        path_xs=xs,
+        path_ys=ys,
         v_ref=args.v_ref,
         horizon_steps=args.time_steps,
     )
 
     fig, ax = plt.subplots(figsize=(6, 6))
     ax.set_aspect("equal")
-    ax.plot(xs, ys, "k--", label="Reference path")
+    ax.plot(xs, ys, "k--", label="Reference path", alpha=0.5)
     # Mark the end position and orientation
     end_x, end_y = xs[-1], ys[-1]
     if len(xs) > 1:
@@ -262,11 +280,12 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         end_yaw = math.atan2(dy, dx)
         arrow_length = 0.5
         ax.arrow(end_x, end_y, arrow_length * math.cos(end_yaw), arrow_length * math.sin(end_yaw),
-                 head_width=0.1, head_length=0.1, fc='purple', ec='purple', label="End orientation")
-    ax.plot(end_x, end_y, 'ko', markersize=8, label="End position")
-    (robot_path_plot,) = ax.plot([], [], "r-", linewidth=2, label="MPPI trajectory")
-    (predicted_path_plot,) = ax.plot([], [], "b--", linewidth=1, label="Predicted trajectory")
-    (plan_window_plot,) = ax.plot([], [], "g-", linewidth=1.5, label="Plan window")
+                 head_width=0.1, head_length=0.1, fc='purple', ec='purple', label="End orientation", alpha=0.7)
+    ax.plot(end_x, end_y, 'ko', markersize=8, label="End position", alpha=0.7)
+    (robot_path_plot,) = ax.plot([], [], "r-", linewidth=2, label="MPPI trajectory", alpha=0.8)
+    (predicted_path_plot,) = ax.plot([], [], "b--", linewidth=1, label="Predicted trajectory", alpha=0.5)
+    (plan_window_plot,) = ax.plot([], [], "g-", linewidth=1.5, label="Plan window", alpha=0.6)
+    (nearest_point_plot,) = ax.plot([], [], "mo", markersize=8, label="Nearest path point", alpha=0.9)
     vehicle_length = 0.5
     vehicle_width = 0.3
     (vehicle_body,) = ax.fill([], [], color='red', alpha=0.5, label="Vehicle")
@@ -279,8 +298,9 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         robot_path_plot.set_data([], [])
         predicted_path_plot.set_data([], [])
         plan_window_plot.set_data([], [])
+        nearest_point_plot.set_data([], [])
         vehicle_body.set_xy(np.empty((0, 2)))
-        return robot_path_plot, predicted_path_plot, plan_window_plot, vehicle_body
+        return robot_path_plot, predicted_path_plot, plan_window_plot, nearest_point_plot, vehicle_body
 
     def update(frame):
         robot_path_plot.set_data(positions[: frame + 1, 0], positions[: frame + 1, 1])
@@ -293,13 +313,16 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
                 plan_window_plot.set_data(pw_pos[:, 0], pw_pos[:, 1])
             else:
                 plan_window_plot.set_data([], [])
+        if frame < len(nearest_points):
+            nearest_pt = nearest_points[frame]
+            nearest_point_plot.set_data([nearest_pt[0]], [nearest_pt[1]])
         x = positions[frame, 0]
         y = positions[frame, 1]
         yaw = float(headings[frame])
         corners = get_vehicle_corners(x, y, yaw, vehicle_length, vehicle_width)
         corners_array = np.array(corners)
         vehicle_body.set_xy(corners_array)
-        return robot_path_plot, predicted_path_plot, plan_window_plot, vehicle_body
+        return robot_path_plot, predicted_path_plot, plan_window_plot, nearest_point_plot, vehicle_body
 
     ani = animation.FuncAnimation(
         fig,
