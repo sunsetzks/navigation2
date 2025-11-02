@@ -103,7 +103,8 @@ class CarVisualizer:
 
     def __init__(self, style: str = "default", 
                  vehicle_length: float | None = None, vehicle_width: float | None = None,
-                 wheel_width: float | None = None, wheel_length: float | None = None):
+                 wheel_width: float | None = None, wheel_length: float | None = None,
+                 wheelbase_length: float | None = None):
         """Initialize the car visualizer with a specific style.
         
         Args:
@@ -112,6 +113,7 @@ class CarVisualizer:
             vehicle_width: Override style's vehicle width
             wheel_width: Override style's wheel width
             wheel_length: Override style's wheel length
+            wheelbase_length: Override style's wheelbase length (distance between front/rear axles)
         """
         if style not in CAR_STYLES:
             raise ValueError(f"Unknown car style: {style}. Available: {list(CAR_STYLES.keys())}")
@@ -126,8 +128,11 @@ class CarVisualizer:
         self.wheel_width = wheel_width or config["wheel_width"]
         self.wheel_length = wheel_length or config["wheel_length"]
         
+        # Calculate wheelbase length (use provided value or fraction of vehicle length)
+        self.wheelbase_length = wheelbase_length or (self.vehicle_length * config["wheelbase_fraction"])
+        
         # Style parameters
-        self.wheelbase_fraction = config["wheelbase_fraction"]
+        self.wheelbase_fraction = config["wheelbase_fraction"]  # Keep for backward compatibility
         self.track_fraction = config["track_fraction"]
         self.body_color = config["body_color"]
         self.body_alpha = config["body_alpha"]
@@ -178,10 +183,10 @@ class CarVisualizer:
         # Wheel mounting positions relative to vehicle center (in vehicle frame)
         # These are the centers where each wheel is attached
         wheel_positions = [
-            (-half_l * self.wheelbase_fraction, -half_w * self.track_fraction),  # rear left
-            (-half_l * self.wheelbase_fraction, half_w * self.track_fraction),   # rear right
-            (half_l * self.wheelbase_fraction, -half_w * self.track_fraction),   # front left
-            (half_l * self.wheelbase_fraction, half_w * self.track_fraction),    # front right
+            (-self.wheelbase_length / 2, -half_w * self.track_fraction),  # rear left
+            (-self.wheelbase_length / 2, half_w * self.track_fraction),   # rear right
+            (self.wheelbase_length / 2, -half_w * self.track_fraction),   # front left
+            (self.wheelbase_length / 2, half_w * self.track_fraction),    # front right
         ]
 
         wheel_corners = []
@@ -237,11 +242,10 @@ class CarVisualizer:
         self.vehicle_body.set_xy(corners_array)
 
         # Update wheelbase line (from rear axle to front axle)
-        half_l = self.vehicle_length / 2
-        rear_axle_x = x - (half_l * self.wheelbase_fraction) * math.cos(yaw)
-        rear_axle_y = y - (half_l * self.wheelbase_fraction) * math.sin(yaw)
-        front_axle_x = x + (half_l * self.wheelbase_fraction) * math.cos(yaw)
-        front_axle_y = y + (half_l * self.wheelbase_fraction) * math.sin(yaw)
+        rear_axle_x = x - (self.wheelbase_length / 2) * math.cos(yaw)
+        rear_axle_y = y - (self.wheelbase_length / 2) * math.sin(yaw)
+        front_axle_x = x + (self.wheelbase_length / 2) * math.cos(yaw)
+        front_axle_y = y + (self.wheelbase_length / 2) * math.sin(yaw)
         self.wheelbase_line.set_data([rear_axle_x, front_axle_x], [rear_axle_y, front_axle_y])
 
         # Update wheels

@@ -224,6 +224,8 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
     parser.add_argument("--car-style", type=str, default="default", 
                        choices=["default", "sedan", "truck", "sports", "compact"],
                        help="Car visualization style")
+    parser.add_argument("--wheelbase-length", type=float, default=None,
+                       help="Wheelbase length [m] (distance between front/rear axles). If not specified, uses style default.")
     args = parser.parse_args(list(argv) if argv else None)
 
     np.random.seed(args.seed)
@@ -280,7 +282,7 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
     (predicted_path_plot,) = ax.plot([], [], "b--", linewidth=1, label="Predicted trajectory", alpha=0.5)
     (plan_window_plot,) = ax.plot([], [], "g-", linewidth=1.5, label="Plan window", alpha=0.6)
     (nearest_point_plot,) = ax.plot([], [], "mo", markersize=8, label="Nearest path point", alpha=0.9)
-    car_visualizer = CarVisualizer(style=args.car_style)
+    car_visualizer = CarVisualizer(style=args.car_style, wheelbase_length=args.wheelbase_length)
     car_visualizer.initialize_plot(ax)
     ax.set_xlim(xs.min() - 1.0, xs.max() + 1.0)
     ax.set_ylim(ys.min() - 1.0, ys.max() + 1.0)
