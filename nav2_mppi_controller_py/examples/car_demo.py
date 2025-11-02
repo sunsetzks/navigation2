@@ -25,6 +25,7 @@ from nav2_mppi_controller_py import (
     build_path_from_xy,
     quaternion_from_yaw,
     yaw_from_quaternion,
+    CarVisualizer,
 )
 
 
@@ -115,13 +116,14 @@ def simulate(
     path_ys: np.ndarray,
     v_ref: float = 0.5,
     horizon_steps: int = 40,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, list, list, list]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, list, list, list, list]:
     positions: list[Tuple[float, float]] = []
     headings: list[float] = []
     velocities: list[float] = []
     predicted_trajectories: list[np.ndarray] = []
     plan_windows: list[list] = []
     nearest_points: list[Tuple[float, float]] = []
+    steering_angles: list[float] = []
 
     for _ in range(steps):
         plan_window = prune_path(path, pose, look_ahead=look_ahead, dt=dt, v_ref=v_ref)
@@ -130,6 +132,10 @@ def simulate(
 
         vx = cmd.twist.linear.x
         wz = cmd.twist.angular.z
+
+        # Calculate steering angle
+        steering_angle = math.atan(0.5 * wz / max(abs(vx), 0.01)) if abs(vx) > 0.01 else 0.0
+        steering_angles.append(steering_angle)
 
         # Simulate predicted trajectory assuming constant control for horizon
         pred_positions = []
@@ -162,7 +168,7 @@ def simulate(
         nearest_pt = get_nearest_path_point((pose.position.x, pose.position.y), path_xs, path_ys)
         nearest_points.append(nearest_pt)
 
-    return np.asarray(positions), np.asarray(headings), np.asarray(velocities), predicted_trajectories, plan_windows, nearest_points
+    return np.asarray(positions), np.asarray(headings), np.asarray(velocities), predicted_trajectories, plan_windows, nearest_points, steering_angles
 
 
 def build_controller(settings: OptimizerSettings) -> MPPIController:
@@ -175,21 +181,6 @@ def build_controller(settings: OptimizerSettings) -> MPPIController:
     ]
     optimizer = Optimizer(settings, motion_model, critics)
     return MPPIController(optimizer)
-
-
-def get_vehicle_corners(x: float, y: float, yaw: float, length: float, width: float) -> list[Tuple[float, float]]:
-    """Calculate the four corners of the vehicle rectangle."""
-    half_l = length / 2
-    half_w = width / 2
-    cos_yaw = math.cos(yaw)
-    sin_yaw = math.sin(yaw)
-    corners = [
-        (x + half_l * cos_yaw - half_w * sin_yaw, y + half_l * sin_yaw + half_w * cos_yaw),  # front right
-        (x + half_l * cos_yaw + half_w * sin_yaw, y + half_l * sin_yaw - half_w * cos_yaw),  # front left
-        (x - half_l * cos_yaw + half_w * sin_yaw, y - half_l * sin_yaw - half_w * cos_yaw),  # rear left
-        (x - half_l * cos_yaw - half_w * sin_yaw, y - half_l * sin_yaw + half_w * cos_yaw),  # rear right
-    ]
-    return corners
 
 
 def get_nearest_path_point(robot_pos: Tuple[float, float], path_xs: np.ndarray, path_ys: np.ndarray) -> Tuple[float, float]:
@@ -255,7 +246,7 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
 
     twist = Twist()
 
-    positions, headings, velocities, predicted_trajectories, plan_windows, nearest_points = simulate(
+    positions, headings, velocities, predicted_trajectories, plan_windows, nearest_points, steering_angles = simulate(
         controller,
         path,
         pose,
@@ -288,7 +279,8 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
     (nearest_point_plot,) = ax.plot([], [], "mo", markersize=8, label="Nearest path point", alpha=0.9)
     vehicle_length = 0.5
     vehicle_width = 0.3
-    (vehicle_body,) = ax.fill([], [], color='red', alpha=0.5, label="Vehicle")
+    car_visualizer = CarVisualizer(vehicle_length=vehicle_length, vehicle_width=vehicle_width)
+    car_visualizer.initialize_plot(ax)
     ax.set_xlim(xs.min() - 1.0, xs.max() + 1.0)
     ax.set_ylim(ys.min() - 1.0, ys.max() + 1.0)
     ax.legend(loc='upper left', bbox_to_anchor=(1, 1))
@@ -299,8 +291,8 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         predicted_path_plot.set_data([], [])
         plan_window_plot.set_data([], [])
         nearest_point_plot.set_data([], [])
-        vehicle_body.set_xy(np.empty((0, 2)))
-        return robot_path_plot, predicted_path_plot, plan_window_plot, nearest_point_plot, vehicle_body
+        car_elements = car_visualizer.update_plot(0, 0, 0, 0)
+        return [robot_path_plot, predicted_path_plot, plan_window_plot, nearest_point_plot] + car_elements
 
     def update(frame):
         robot_path_plot.set_data(positions[: frame + 1, 0], positions[: frame + 1, 1])
@@ -319,10 +311,9 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         x = positions[frame, 0]
         y = positions[frame, 1]
         yaw = float(headings[frame])
-        corners = get_vehicle_corners(x, y, yaw, vehicle_length, vehicle_width)
-        corners_array = np.array(corners)
-        vehicle_body.set_xy(corners_array)
-        return robot_path_plot, predicted_path_plot, plan_window_plot, nearest_point_plot, vehicle_body
+        steering_angle = steering_angles[frame] if frame < len(steering_angles) else 0.0
+        car_elements = car_visualizer.update_plot(x, y, yaw, steering_angle)
+        return [robot_path_plot, predicted_path_plot, plan_window_plot, nearest_point_plot] + car_elements
 
     ani = animation.FuncAnimation(
         fig,

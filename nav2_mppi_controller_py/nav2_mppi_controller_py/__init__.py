@@ -16,6 +16,7 @@ from .models import (
 )
 from .motion_models import AckermannMotionModel, DiffDriveMotionModel, OmniMotionModel
 from .optimizer import Optimizer
+from .visualization import CarVisualizer
 
 __all__ = [
     "MPPIController",
@@ -38,4 +39,5 @@ __all__ = [
     "build_path_from_xy",
     "quaternion_from_yaw",
     "yaw_from_quaternion",
+    "CarVisualizer",
 ]
