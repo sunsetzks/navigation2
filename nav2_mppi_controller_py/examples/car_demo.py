@@ -232,7 +232,7 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
     controller.set_plan(path)
 
     pose = Pose()
-    pose.position.x = 0.5
+    pose.position.x = 0.0
     pose.position.y = 0.1
     initial_yaw = math.atan2(ys[1] - ys[0], xs[1] - xs[0]) if args.steps > 1 else 0.0
     pose.orientation = quaternion_from_yaw(initial_yaw)
