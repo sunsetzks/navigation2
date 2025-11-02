@@ -211,8 +211,8 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         default=None,
         help="GIF output path. Defaults to nav2_mppi_controller_py/media/python_demo.gif",
     )
-    parser.add_argument("--no-save", action="store_true", help="Skip saving the animation to disk")
-    parser.add_argument("--show", action="store_true", help="Display the animation window")
+    parser.add_argument("--no-show", action="store_true", help="Skip displaying the animation window")
+    parser.add_argument("--save", action="store_true", help="Save the animation to disk")
     parser.add_argument("--v-ref", type=float, default=0.5, help="Reference speed [m/s] for time-based pruning")
     args = parser.parse_args(list(argv) if argv else None)
 
@@ -310,7 +310,7 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         blit=True,
     )
 
-    if not args.no_save:
+    if args.save:
         output = (
             args.output.resolve()
             if args.output is not None
@@ -320,7 +320,7 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         ani.save(output, writer="pillow", fps=max(int(1 / args.dt), 1))
         print(f"Animation saved to {output}")
 
-    if args.show:
+    if not args.no_show:
         plt.show()
     else:
         plt.close(fig)
