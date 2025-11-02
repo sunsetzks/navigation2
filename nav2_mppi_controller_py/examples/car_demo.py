@@ -116,7 +116,7 @@ def simulate(
     path_ys: np.ndarray,
     v_ref: float = 0.5,
     horizon_steps: int = 40,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, list, list, list, list]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, list, list, list, list, list]:
     positions: list[Tuple[float, float]] = []
     headings: list[float] = []
     velocities: list[float] = []
@@ -124,6 +124,7 @@ def simulate(
     plan_windows: list[list] = []
     nearest_points: list[Tuple[float, float]] = []
     steering_angles: list[float] = []
+    command_velocities: list[Tuple[float, float]] = []  # (vx_cmd, wz_cmd)
 
     for _ in range(steps):
         plan_window = prune_path(path, pose, look_ahead=look_ahead, dt=dt, v_ref=v_ref)
@@ -164,11 +165,10 @@ def simulate(
 
         plan_windows.append([(p.pose.position.x, p.pose.position.y) for p in plan_window.poses])
         
-        # Find nearest point on the reference path
-        nearest_pt = get_nearest_path_point((pose.position.x, pose.position.y), path_xs, path_ys)
-        nearest_points.append(nearest_pt)
+        # Store command velocities
+        command_velocities.append((vx, wz))
 
-    return np.asarray(positions), np.asarray(headings), np.asarray(velocities), predicted_trajectories, plan_windows, nearest_points, steering_angles
+    return np.asarray(positions), np.asarray(headings), np.asarray(velocities), predicted_trajectories, plan_windows, nearest_points, steering_angles, command_velocities
 
 
 def build_controller(settings: OptimizerSettings) -> MPPIController:
@@ -251,7 +251,7 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
 
     twist = Twist()
 
-    positions, headings, velocities, predicted_trajectories, plan_windows, nearest_points, steering_angles = simulate(
+    positions, headings, velocities, predicted_trajectories, plan_windows, nearest_points, steering_angles, command_velocities = simulate(
         controller,
         path,
         pose,
@@ -265,7 +265,8 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         horizon_steps=args.time_steps,
     )
 
-    fig, ax = plt.subplots(figsize=(6, 6))
+    fig, (ax_main, ax_vel) = plt.subplots(1, 2, figsize=(14, 6))
+    ax = ax_main  # Keep ax as alias for backward compatibility
     ax.set_aspect("equal")
     ax.plot(xs, ys, "k--", label="Reference path", alpha=0.5)
     # Mark the end position and orientation
@@ -289,13 +290,35 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
     ax.legend(loc='upper left', bbox_to_anchor=(1, 1))
     ax.set_title("nav2_mppi_controller_py demo")
 
+    # Set up velocity subplot
+    ax_vel.set_title("Command Velocities")
+    ax_vel.set_xlabel("Time [s]")
+    ax_vel.set_ylabel("Velocity")
+    time_steps = np.arange(len(command_velocities)) * args.dt
+    vx_cmds = [cmd[0] for cmd in command_velocities]
+    wz_cmds = [cmd[1] for cmd in command_velocities]
+    
+    (vx_plot,) = ax_vel.plot([], [], "b-", linewidth=2, label="Linear velocity (vx)", alpha=0.8)
+    (wz_plot,) = ax_vel.plot([], [], "r-", linewidth=2, label="Angular velocity (wz)", alpha=0.8)
+    ax_vel.legend()
+    ax_vel.grid(True, alpha=0.3)
+    
+    # Set velocity plot limits
+    ax_vel.set_xlim(0, time_steps[-1])
+    vx_margin = 0.1 * (max(vx_cmds) - min(vx_cmds)) if vx_cmds else 0.1
+    wz_margin = 0.1 * (max(wz_cmds) - min(wz_cmds)) if wz_cmds else 0.1
+    ax_vel.set_ylim(min(min(vx_cmds) - vx_margin, min(wz_cmds) - wz_margin), 
+                    max(max(vx_cmds) + vx_margin, max(wz_cmds) + wz_margin))
+
     def init():
         robot_path_plot.set_data([], [])
         predicted_path_plot.set_data([], [])
         plan_window_plot.set_data([], [])
         nearest_point_plot.set_data([], [])
+        vx_plot.set_data([], [])
+        wz_plot.set_data([], [])
         car_elements = car_visualizer.update_plot(0, 0, 0, 0)
-        return [robot_path_plot, predicted_path_plot, plan_window_plot, nearest_point_plot] + car_elements
+        return [robot_path_plot, predicted_path_plot, plan_window_plot, nearest_point_plot, vx_plot, wz_plot] + car_elements
 
     def update(frame):
         robot_path_plot.set_data(positions[: frame + 1, 0], positions[: frame + 1, 1])
@@ -311,12 +334,18 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         if frame < len(nearest_points):
             nearest_pt = nearest_points[frame]
             nearest_point_plot.set_data([nearest_pt[0]], [nearest_pt[1]])
+        
+        # Update velocity plots
+        current_time = time_steps[:frame + 1]
+        vx_plot.set_data(current_time, vx_cmds[:frame + 1])
+        wz_plot.set_data(current_time, wz_cmds[:frame + 1])
+        
         x = positions[frame, 0]
         y = positions[frame, 1]
         yaw = float(headings[frame])
         steering_angle = steering_angles[frame] if frame < len(steering_angles) else 0.0
         car_elements = car_visualizer.update_plot(x, y, yaw, steering_angle)
-        return [robot_path_plot, predicted_path_plot, plan_window_plot, nearest_point_plot] + car_elements
+        return [robot_path_plot, predicted_path_plot, plan_window_plot, nearest_point_plot, vx_plot, wz_plot] + car_elements
 
     ani = animation.FuncAnimation(
         fig,
@@ -338,6 +367,7 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         print(f"Animation saved to {output}")
 
     if not args.no_show:
+        plt.tight_layout()
         plt.show()
     else:
         plt.close(fig)
