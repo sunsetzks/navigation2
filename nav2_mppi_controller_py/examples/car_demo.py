@@ -221,6 +221,9 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
     parser.add_argument("--no-show", action="store_true", help="Skip displaying the animation window")
     parser.add_argument("--save", action="store_true", help="Save the animation to disk")
     parser.add_argument("--v-ref", type=float, default=0.5, help="Reference speed [m/s] for time-based pruning")
+    parser.add_argument("--car-style", type=str, default="default", 
+                       choices=["default", "sedan", "truck", "sports", "compact"],
+                       help="Car visualization style")
     args = parser.parse_args(list(argv) if argv else None)
 
     np.random.seed(args.seed)
@@ -277,9 +280,7 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
     (predicted_path_plot,) = ax.plot([], [], "b--", linewidth=1, label="Predicted trajectory", alpha=0.5)
     (plan_window_plot,) = ax.plot([], [], "g-", linewidth=1.5, label="Plan window", alpha=0.6)
     (nearest_point_plot,) = ax.plot([], [], "mo", markersize=8, label="Nearest path point", alpha=0.9)
-    vehicle_length = 0.5
-    vehicle_width = 0.3
-    car_visualizer = CarVisualizer(vehicle_length=vehicle_length, vehicle_width=vehicle_width)
+    car_visualizer = CarVisualizer(style=args.car_style)
     car_visualizer.initialize_plot(ax)
     ax.set_xlim(xs.min() - 1.0, xs.max() + 1.0)
     ax.set_ylim(ys.min() - 1.0, ys.max() + 1.0)

@@ -1,22 +1,147 @@
 import math
-from typing import List, Tuple, Any
+from typing import List, Tuple, Any, Dict
 
 import matplotlib.pyplot as plt
 import numpy as np
 
 
+# Car style configurations
+CAR_STYLES = {
+    "default": {
+        "vehicle_length": 0.5,
+        "vehicle_width": 0.3,
+        "wheel_width": 0.04,
+        "wheel_length": 0.12,
+        "wheelbase_fraction": 0.8,
+        "track_fraction": 0.9,
+        "body_color": "red",
+        "body_alpha": 0.5,
+        "rear_wheel_color": "dimgray",
+        "front_wheel_color": "black",
+        "wheel_alpha": 0.8,
+        "wheelbase_color": "blue",
+        "wheelbase_style": "--",
+        "wheelbase_alpha": 0.7,
+        "wheelbase_linewidth": 2.5,
+    },
+    "sedan": {
+        "vehicle_length": 0.45,
+        "vehicle_width": 0.25,
+        "wheel_width": 0.035,
+        "wheel_length": 0.1,
+        "wheelbase_fraction": 0.75,
+        "track_fraction": 0.85,
+        "body_color": "#1f77b4",  # steel blue
+        "body_alpha": 0.6,
+        "rear_wheel_color": "black",
+        "front_wheel_color": "black",
+        "wheel_alpha": 0.9,
+        "wheelbase_color": "cyan",
+        "wheelbase_style": "--",
+        "wheelbase_alpha": 0.75,
+        "wheelbase_linewidth": 2.5,
+    },
+    "truck": {
+        "vehicle_length": 0.6,
+        "vehicle_width": 0.35,
+        "wheel_width": 0.05,
+        "wheel_length": 0.14,
+        "wheelbase_fraction": 0.8,
+        "track_fraction": 0.95,
+        "body_color": "#ff7f0e",  # orange
+        "body_alpha": 0.55,
+        "rear_wheel_color": "darkslategray",
+        "front_wheel_color": "darkslategray",
+        "wheel_alpha": 0.85,
+        "wheelbase_color": "darkorange",
+        "wheelbase_style": "--",
+        "wheelbase_alpha": 0.7,
+        "wheelbase_linewidth": 2.5,
+    },
+    "sports": {
+        "vehicle_length": 0.48,
+        "vehicle_width": 0.28,
+        "wheel_width": 0.038,
+        "wheel_length": 0.11,
+        "wheelbase_fraction": 0.72,
+        "track_fraction": 0.88,
+        "body_color": "#d62728",  # red
+        "body_alpha": 0.65,
+        "rear_wheel_color": "black",
+        "front_wheel_color": "black",
+        "wheel_alpha": 0.95,
+        "wheelbase_color": "red",
+        "wheelbase_style": "--",
+        "wheelbase_alpha": 0.75,
+        "wheelbase_linewidth": 2.5,
+    },
+    "compact": {
+        "vehicle_length": 0.35,
+        "vehicle_width": 0.22,
+        "wheel_width": 0.032,
+        "wheel_length": 0.09,
+        "wheelbase_fraction": 0.75,
+        "track_fraction": 0.82,
+        "body_color": "#2ca02c",  # green
+        "body_alpha": 0.6,
+        "rear_wheel_color": "#333333",
+        "front_wheel_color": "#333333",
+        "wheel_alpha": 0.88,
+        "wheelbase_color": "lime",
+        "wheelbase_style": "--",
+        "wheelbase_alpha": 0.7,
+        "wheelbase_linewidth": 2.5,
+    },
+}
+
+
 class CarVisualizer:
-    """Visualization class for car with wheels and steering."""
+    """Visualization class for car with wheels and steering.
+    
+    Supports multiple car styles: 'default', 'sedan', 'truck', 'sports', 'compact'
+    """
 
-    def __init__(self, vehicle_length: float = 0.5, vehicle_width: float = 0.3,
-                 wheel_width: float = 0.04, wheel_length: float = 0.12):
-        self.vehicle_length = vehicle_length
-        self.vehicle_width = vehicle_width
-        self.wheel_width = wheel_width
-        self.wheel_length = wheel_length
-
+    def __init__(self, style: str = "default", 
+                 vehicle_length: float | None = None, vehicle_width: float | None = None,
+                 wheel_width: float | None = None, wheel_length: float | None = None):
+        """Initialize the car visualizer with a specific style.
+        
+        Args:
+            style: Car style name ('default', 'sedan', 'truck', 'sports', 'compact')
+            vehicle_length: Override style's vehicle length
+            vehicle_width: Override style's vehicle width
+            wheel_width: Override style's wheel width
+            wheel_length: Override style's wheel length
+        """
+        if style not in CAR_STYLES:
+            raise ValueError(f"Unknown car style: {style}. Available: {list(CAR_STYLES.keys())}")
+        
+        # Load style configuration
+        config = CAR_STYLES[style].copy()
+        self.style = style
+        
+        # Override with user-provided values
+        self.vehicle_length = vehicle_length or config["vehicle_length"]
+        self.vehicle_width = vehicle_width or config["vehicle_width"]
+        self.wheel_width = wheel_width or config["wheel_width"]
+        self.wheel_length = wheel_length or config["wheel_length"]
+        
+        # Style parameters
+        self.wheelbase_fraction = config["wheelbase_fraction"]
+        self.track_fraction = config["track_fraction"]
+        self.body_color = config["body_color"]
+        self.body_alpha = config["body_alpha"]
+        self.rear_wheel_color = config["rear_wheel_color"]
+        self.front_wheel_color = config["front_wheel_color"]
+        self.wheel_alpha = config["wheel_alpha"]
+        self.wheelbase_color = config["wheelbase_color"]
+        self.wheelbase_style = config["wheelbase_style"]
+        self.wheelbase_alpha = config["wheelbase_alpha"]
+        self.wheelbase_linewidth = config.get("wheelbase_linewidth", 2.5)
+        
         # Wheel colors: rear left, rear right, front left, front right
-        self.wheel_colors = ['dimgray', 'dimgray', 'black', 'black']
+        self.wheel_colors = [self.rear_wheel_color, self.rear_wheel_color,
+                            self.front_wheel_color, self.front_wheel_color]
 
         # Initialize plot elements
         self.vehicle_body = None
@@ -53,10 +178,10 @@ class CarVisualizer:
         # Wheel mounting positions relative to vehicle center (in vehicle frame)
         # These are the centers where each wheel is attached
         wheel_positions = [
-            (-half_l * 0.8, -half_w * 0.9),  # rear left
-            (-half_l * 0.8, half_w * 0.9),   # rear right
-            (half_l * 0.8, -half_w * 0.9),   # front left
-            (half_l * 0.8, half_w * 0.9),    # front right
+            (-half_l * self.wheelbase_fraction, -half_w * self.track_fraction),  # rear left
+            (-half_l * self.wheelbase_fraction, half_w * self.track_fraction),   # rear right
+            (half_l * self.wheelbase_fraction, -half_w * self.track_fraction),   # front left
+            (half_l * self.wheelbase_fraction, half_w * self.track_fraction),    # front right
         ]
 
         wheel_corners = []
@@ -92,15 +217,16 @@ class CarVisualizer:
     def initialize_plot(self, ax: Any) -> None:
         """Initialize plot elements for the car visualization."""
         # Vehicle body
-        self.vehicle_body = ax.fill([], [], color='red', alpha=0.5, label="Vehicle")[0]
+        self.vehicle_body = ax.fill([], [], color=self.body_color, alpha=self.body_alpha, label="Vehicle")[0]
 
-        # Wheelbase line (dotted line connecting front and rear axles)
-        self.wheelbase_line, = ax.plot([], [], 'b:', linewidth=2, label="Wheelbase", alpha=0.7)
+        # Wheelbase line (dash-dot line connecting front and rear axles)
+        self.wheelbase_line, = ax.plot([], [], color=self.wheelbase_color, linestyle=self.wheelbase_style, 
+                                       linewidth=self.wheelbase_linewidth, label="Wheelbase", alpha=self.wheelbase_alpha)
 
         # Wheels
         self.wheels = []
-        for color in self.wheel_colors:
-            wheel = ax.fill([], [], color=color, alpha=0.8, label=f"Wheel {len(self.wheels)+1}")
+        for i, color in enumerate(self.wheel_colors):
+            wheel = ax.fill([], [], color=color, alpha=self.wheel_alpha, label=f"Wheel {i+1}")
             self.wheels.append(wheel[0])
 
     def update_plot(self, x: float, y: float, yaw: float, steering_angle: float = 0.0) -> List:
@@ -112,10 +238,10 @@ class CarVisualizer:
 
         # Update wheelbase line (from rear axle to front axle)
         half_l = self.vehicle_length / 2
-        rear_axle_x = x - (half_l * 0.8) * math.cos(yaw)
-        rear_axle_y = y - (half_l * 0.8) * math.sin(yaw)
-        front_axle_x = x + (half_l * 0.8) * math.cos(yaw)
-        front_axle_y = y + (half_l * 0.8) * math.sin(yaw)
+        rear_axle_x = x - (half_l * self.wheelbase_fraction) * math.cos(yaw)
+        rear_axle_y = y - (half_l * self.wheelbase_fraction) * math.sin(yaw)
+        front_axle_x = x + (half_l * self.wheelbase_fraction) * math.cos(yaw)
+        front_axle_y = y + (half_l * self.wheelbase_fraction) * math.sin(yaw)
         self.wheelbase_line.set_data([rear_axle_x, front_axle_x], [rear_axle_y, front_axle_y])
 
         # Update wheels
