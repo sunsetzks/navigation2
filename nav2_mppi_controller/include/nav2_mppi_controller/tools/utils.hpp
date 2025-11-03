@@ -666,7 +666,12 @@ inline size_t findClosestPathPt(const std::vector<float> & vec, float dist, size
 {
   auto iter = std::lower_bound(vec.begin() + init, vec.end(), dist);
   if (iter == vec.begin() + init) {
-    // TODO: This returns 0 but should return 'init' - potential bug when init > 0
+    // TODO/FIXME: Current behavior returns 0 when 'iter' equals 'vec.begin() + init'.
+    // This is incorrect when 'init' > 0 — it should return 'init'.
+    // Additional issues to address when fixing this function:
+    //  - If 'iter == vec.end()' the code below dereferences 'iter' (UB).
+    //  - Handle empty 'vec' and the case 'init >= vec.size()'.
+    //  - Ensure returned index is within [init, vec.size() - 1].
     return 0;
   }
   if (dist - *(iter - 1) < *iter - dist) {
