@@ -101,6 +101,8 @@ class CarVisualizer:
     Supports multiple car styles: 'default', 'sedan', 'truck', 'sports', 'compact'
     """
 
+    FRONT_WHEEL_INDICES = [2, 3]
+
     def __init__(self, style: str = "default", 
                  vehicle_length: float | None = None, vehicle_width: float | None = None,
                  wheel_width: float | None = None, wheel_length: float | None = None,
@@ -265,7 +267,7 @@ class CarVisualizer:
             plot_elements.append(wheel)
         
         # Update wheel orientation lines for front wheels
-        for line_idx, wheel_idx in enumerate([2, 3]):  # Front wheels: left and right
+        for line_idx, wheel_idx in enumerate(self.FRONT_WHEEL_INDICES):  # Front wheels: left and right
             corners_array = np.array(wheel_corners[wheel_idx])
             center_x = np.mean(corners_array[:, 0])
             center_y = np.mean(corners_array[:, 1])
@@ -310,7 +312,7 @@ class CarVisualizer:
         line_elements = []
         
         # Draw lines for front wheels only (indices 2, 3)
-        for i in range(2, 4):
+        for i in self.FRONT_WHEEL_INDICES:
             corners_array = np.array(wheel_corners[i])
             center_x = np.mean(corners_array[:, 0])
             center_y = np.mean(corners_array[:, 1])

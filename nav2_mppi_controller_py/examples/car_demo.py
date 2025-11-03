@@ -265,7 +265,7 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         horizon_steps=args.time_steps,
     )
 
-    fig, (ax_main, ax_vel) = plt.subplots(1, 2, figsize=(14, 6))
+    fig, ((ax_main, ax_vel), (ax_steering, ax_empty)) = plt.subplots(2, 2, figsize=(14, 10))
     ax = ax_main  # Keep ax as alias for backward compatibility
     ax.set_aspect("equal")
     ax.plot(xs, ys, "k--", label="Reference path", alpha=0.5)
@@ -310,6 +310,23 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
     ax_vel.set_ylim(min(min(vx_cmds) - vx_margin, min(wz_cmds) - wz_margin), 
                     max(max(vx_cmds) + vx_margin, max(wz_cmds) + wz_margin))
 
+    # Set up steering angle subplot
+    ax_steering.set_title("Steering Wheel Angle")
+    ax_steering.set_xlabel("Time [s]")
+    ax_steering.set_ylabel("Steering Angle [rad]")
+    
+    (steering_plot,) = ax_steering.plot([], [], "g-", linewidth=2, label="Steering angle", alpha=0.8)
+    ax_steering.legend()
+    ax_steering.grid(True, alpha=0.3)
+    
+    # Set steering angle plot limits
+    ax_steering.set_xlim(0, time_steps[-1])
+    steering_margin = 0.1 * (max(steering_angles) - min(steering_angles)) if steering_angles else 0.1
+    ax_steering.set_ylim(min(steering_angles) - steering_margin, max(steering_angles) + steering_margin)
+
+    # Hide the empty subplot
+    ax_empty.axis('off')
+
     def init():
         robot_path_plot.set_data([], [])
         predicted_path_plot.set_data([], [])
@@ -317,8 +334,9 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         nearest_point_plot.set_data([], [])
         vx_plot.set_data([], [])
         wz_plot.set_data([], [])
+        steering_plot.set_data([], [])
         car_elements = car_visualizer.update_plot(0, 0, 0, 0)
-        return [robot_path_plot, predicted_path_plot, plan_window_plot, nearest_point_plot, vx_plot, wz_plot] + car_elements
+        return [robot_path_plot, predicted_path_plot, plan_window_plot, nearest_point_plot, vx_plot, wz_plot, steering_plot] + car_elements
 
     def update(frame):
         robot_path_plot.set_data(positions[: frame + 1, 0], positions[: frame + 1, 1])
@@ -340,12 +358,15 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         vx_plot.set_data(current_time, vx_cmds[:frame + 1])
         wz_plot.set_data(current_time, wz_cmds[:frame + 1])
         
+        # Update steering angle plot
+        steering_plot.set_data(current_time, steering_angles[:frame + 1])
+        
         x = positions[frame, 0]
         y = positions[frame, 1]
         yaw = float(headings[frame])
         steering_angle = steering_angles[frame] if frame < len(steering_angles) else 0.0
         car_elements = car_visualizer.update_plot(x, y, yaw, steering_angle)
-        return [robot_path_plot, predicted_path_plot, plan_window_plot, nearest_point_plot, vx_plot, wz_plot] + car_elements
+        return [robot_path_plot, predicted_path_plot, plan_window_plot, nearest_point_plot, vx_plot, wz_plot, steering_plot] + car_elements
 
     ani = animation.FuncAnimation(
         fig,
