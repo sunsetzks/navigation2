@@ -7,6 +7,7 @@ from typing import Iterable, Tuple
 
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
+from matplotlib.widgets import Button
 import numpy as np
 
 from nav2_mppi_controller_py import (
@@ -376,6 +377,53 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         interval=max(int(args.dt * 1000.0), 10),
         blit=True,
     )
+
+    # Add pause button
+    ax_pause = fig.add_axes((0.92, 0.05, 0.05, 0.04))
+    btn_pause = Button(ax_pause, 'Pause', color='lightgoldenrodyellow', hovercolor='lightyellow')
+    
+    pause_state = {'paused': False, 'current_frame': 0}
+    info_texts = []  # Store info text for updating
+    
+    def on_pause(event):
+        if pause_state['paused']:
+            ani.event_source.start()
+            btn_pause.label.set_text('Pause')
+            pause_state['paused'] = False
+        else:
+            ani.event_source.stop()
+            btn_pause.label.set_text('Play')
+            pause_state['paused'] = True
+    
+    def on_key(event):
+        if event.key == ' ':  # Space bar to toggle pause
+            on_pause(None)
+        elif event.key == 'right' and pause_state['paused']:  # Right arrow to step forward
+            pause_state['current_frame'] = min(pause_state['current_frame'] + 1, len(positions) - 1)
+            # Clear the current plot elements and redraw
+            init()
+            update(pause_state['current_frame'])
+            # Update info text
+            for info_text in info_texts:
+                info_text.set_text(f'Space: Pause/Play | ← →: Step | Step: {pause_state["current_frame"]}/{len(positions) - 1}')
+            fig.canvas.draw()
+        elif event.key == 'left' and pause_state['paused']:  # Left arrow to step backward
+            pause_state['current_frame'] = max(pause_state['current_frame'] - 1, 0)
+            # Clear the current plot elements and redraw
+            init()
+            update(pause_state['current_frame'])
+            # Update info text
+            for info_text in info_texts:
+                info_text.set_text(f'Space: Pause/Play | ← →: Step | Step: {pause_state["current_frame"]}/{len(positions) - 1}')
+            fig.canvas.draw()
+    
+    btn_pause.on_clicked(on_pause)
+    fig.canvas.mpl_connect('key_press_event', on_key)
+    
+    # Add info text
+    info_text = fig.text(0.5, 0.01, f'Space: Pause/Play | ← →: Step | Step: 0/{len(positions) - 1}',
+                         ha='center', fontsize=9, color='gray')
+    info_texts.append(info_text)
 
     if args.save:
         output = (
