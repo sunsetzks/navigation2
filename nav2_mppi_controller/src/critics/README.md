@@ -24,7 +24,7 @@ Each critic below contributes a term \(c_i\) to this cost function.
 **Purpose**: Enforces velocity and turning constraints to ensure physically feasible trajectories.
 
 **Mathematical Principle**:
-\[ c_{\text{constraint}} = \left[ \sum_{t=0}^{T-1} \left( \max(v_t - v_{\max}, 0) + \max(v_{\min} - v_t, 0) + \max\left(\frac{r_{\min}}{|v_x|} - |\omega|, 0\right) \right) \cdot \Delta t \cdot w \right]^p \]
+\[ c_{\text{constraint}} = \left[ \sum_{t=0}^{T-1} \left( \max(v_t - v_{\max}, 0) + \max(v_{\min} - v_t, 0) + \max\left(r_{\min} - \frac{|v_x|}{|\omega|}, 0\right) \right) \cdot \Delta t \cdot w \right]^p \]
 
 where:
 - \(v_t = \sqrt{v_x^2 + v_y^2}\) is the total velocity magnitude
@@ -109,7 +109,7 @@ Similar to PathAlignCritic but finds minimum distance to path segments rather th
 **Mathematical Principle**:
 \[ c_{\text{path\_angle}} = \left[ w \cdot \frac{1}{T} \sum_{t=0}^{T-1} |\theta_{\text{shortest}}(\theta_t, \theta_{\text{path}}(x_t, y_t))| \right]^p \]
 
-where \(\theta_{\text{path}}(x_t, y_t)\) is the angle to the path point ahead.
+where \(\theta_{\text{path}}(x_t, y_t)\) is the angle to the path point at the furthest reached path point plus an offset ahead.
 
 ### 9. PathFollowCritic
 
