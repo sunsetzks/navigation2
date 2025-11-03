@@ -135,7 +135,7 @@ def simulate(
         wz = cmd.twist.angular.z
 
         # Calculate steering angle
-        steering_angle = math.atan(0.5 * wz / max(abs(vx), 0.01)) if abs(vx) > 0.01 else 0.0
+        steering_angle = math.atan(0.5 * wz / vx) if abs(vx) > 0.01 else 0.0
         steering_angles.append(steering_angle)
 
         # Simulate predicted trajectory assuming constant control for horizon
@@ -175,8 +175,8 @@ def build_controller(settings: OptimizerSettings) -> MPPIController:
     motion_model = DiffDriveMotionModel()
     critics = [
         PathFollowCritic(weight=12.0),
-        GoalDistanceCritic(weight=20.0),
-        GoalHeadingCritic(weight=5.0),
+        GoalDistanceCritic(weight=10.0),
+        GoalHeadingCritic(weight=0.0),
         ControlEffortCritic(weight=0.1),
     ]
     optimizer = Optimizer(settings, motion_model, critics)
@@ -206,7 +206,7 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         default="circle",
         help="Reference path geometry",
     )
-    parser.add_argument("--look-ahead", type=float, default=8.0, help="Time horizon [s] for pruning the plan")
+    parser.add_argument("--look-ahead", type=float, default=1.0, help="Time horizon [s] for pruning the plan")
     parser.add_argument("--batch-size", type=int, default=512, help="MPPI batch size")
     parser.add_argument("--time-steps", type=int, default=40, help="MPPI horizon length")
     parser.add_argument("--iterations", type=int, default=2, help="MPPI optimisation iterations per cycle")

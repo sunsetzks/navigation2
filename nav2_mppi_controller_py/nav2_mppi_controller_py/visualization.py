@@ -153,6 +153,7 @@ class CarVisualizer:
         self.wheels = []
         self.wheelbase_line = None
         self.steering_angle = 0.0
+        self.wheel_orientation_lines = []
 
     def get_vehicle_corners(self, x: float, y: float, yaw: float) -> List[Tuple[float, float]]:
         """Calculate the four corners of the vehicle rectangle."""
@@ -233,6 +234,12 @@ class CarVisualizer:
         for i, color in enumerate(self.wheel_colors):
             wheel = ax.fill([], [], color=color, alpha=self.wheel_alpha, label=f"Wheel {i+1}")
             self.wheels.append(wheel[0])
+        
+        # Wheel orientation lines for front wheels
+        self.wheel_orientation_lines = []
+        for i in range(2):  # Two front wheels
+            line, = ax.plot([], [], color='r', linewidth=2, alpha=0.8)
+            self.wheel_orientation_lines.append(line)
 
     def update_plot(self, x: float, y: float, yaw: float, steering_angle: float = 0.0) -> List:
         """Update the car visualization for the given position and orientation."""
@@ -256,6 +263,20 @@ class CarVisualizer:
             corners_array = np.array(corners)
             wheel.set_xy(corners_array)
             plot_elements.append(wheel)
+        
+        # Update wheel orientation lines for front wheels
+        for line_idx, wheel_idx in enumerate([2, 3]):  # Front wheels: left and right
+            corners_array = np.array(wheel_corners[wheel_idx])
+            center_x = np.mean(corners_array[:, 0])
+            center_y = np.mean(corners_array[:, 1])
+            wheel_yaw = yaw + steering_angle
+            line_length = 0.06
+            
+            self.wheel_orientation_lines[line_idx].set_data(
+                [center_x, center_x + line_length * np.cos(wheel_yaw)],
+                [center_y, center_y + line_length * np.sin(wheel_yaw)]
+            )
+            plot_elements.append(self.wheel_orientation_lines[line_idx])
 
         return plot_elements
 
@@ -265,3 +286,39 @@ class CarVisualizer:
             return 0.0
         # Steering angle = atan(wheelbase * wz / vx)
         return math.atan(wheelbase * wz / vx)
+
+    def draw_wheel_orientation_lines(self, ax: Any, x: float, y: float, yaw: float, 
+                                    steering_angle: float = 0.0, line_length: float = 0.06,
+                                    color: str = 'r', linewidth: float = 2, alpha: float = 0.8) -> List:
+        """Draw orientation lines from front wheel centers showing steering direction.
+        
+        Args:
+            ax: Matplotlib axes to draw on
+            x: Vehicle center x position
+            y: Vehicle center y position
+            yaw: Vehicle orientation angle
+            steering_angle: Front wheel steering angle
+            line_length: Length of orientation lines
+            color: Color of the lines
+            linewidth: Line width
+            alpha: Transparency alpha value
+            
+        Returns:
+            List of line plot elements
+        """
+        wheel_corners = self.get_wheel_corners(x, y, yaw, steering_angle)
+        line_elements = []
+        
+        # Draw lines for front wheels only (indices 2, 3)
+        for i in range(2, 4):
+            corners_array = np.array(wheel_corners[i])
+            center_x = np.mean(corners_array[:, 0])
+            center_y = np.mean(corners_array[:, 1])
+            wheel_yaw = yaw + steering_angle
+            
+            line, = ax.plot([center_x, center_x + line_length * np.cos(wheel_yaw)],
+                           [center_y, center_y + line_length * np.sin(wheel_yaw)],
+                           color=color, linewidth=linewidth, alpha=alpha)
+            line_elements.append(line)
+        
+        return line_elements
