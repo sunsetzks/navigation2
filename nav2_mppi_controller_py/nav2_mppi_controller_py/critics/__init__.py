@@ -4,7 +4,6 @@ from .control_effort import ControlEffortCritic
 from .goal_angle import GoalHeadingCritic
 from .goal_distance import GoalDistanceCritic
 from .path_align import PathAlignCritic
-from .path_align_legacy import PathAlignLegacyCritic
 from .path_angle import PathAngleCritic
 from .path_follow import PathFollowCritic
 from .prefer_forward import PreferForwardCritic
@@ -18,7 +17,6 @@ __all__ = [
     "GoalDistanceCritic",
     "GoalHeadingCritic",
     "PathAlignCritic",
-    "PathAlignLegacyCritic",
     "PathAngleCritic",
     "PathFollowCritic",
     "PreferForwardCritic",
