@@ -292,12 +292,10 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
     )
 
     fig = plt.figure(figsize=(16, 12))
-    gs = fig.add_gridspec(3, 2, hspace=0.3, wspace=0.3)
+    gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
     ax_main = fig.add_subplot(gs[0, :])
     ax_vel = fig.add_subplot(gs[1, 0])
     ax_steering = fig.add_subplot(gs[1, 1])
-    ax_filter_vx = fig.add_subplot(gs[2, 0])
-    ax_filter_wz = fig.add_subplot(gs[2, 1])
     ax = ax_main  # Keep ax as alias for backward compatibility
     ax.set_aspect("equal")
     ax.plot(xs, ys, "k--", label="Reference path", alpha=0.5)
@@ -330,51 +328,52 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
     vx_cmds = [cmd[0] for cmd in command_velocities]
     wz_cmds = [cmd[1] for cmd in command_velocities]
     
-    (vx_plot,) = ax_vel.plot([], [], "b-", linewidth=2, label="Linear velocity (vx)", alpha=0.8)
-    (wz_plot,) = ax_vel.plot([], [], "r-", linewidth=2, label="Angular velocity (wz)", alpha=0.8)
+    # Extract first value from each control sequence for unfiltered plots
+    vx_unfiltered = [seq[0] if len(seq) > 0 else 0.0 for seq in control_sequences_before_filter]
+    wz_unfiltered = [seq[0] if len(seq) > 0 else 0.0 for seq in control_sequences_wz_before_filter]
+    
+    (vx_plot,) = ax_vel.plot([], [], "b-", linewidth=2, label="Linear velocity (vx) filtered", alpha=0.7)
+    (wz_plot,) = ax_vel.plot([], [], "r-", linewidth=2, label="Angular velocity (wz) filtered", alpha=0.7)
+    (vx_unfiltered_plot,) = ax_vel.plot([], [], "b--", linewidth=1.5, label="Linear velocity (vx) unfiltered", alpha=0.3)
+    (wz_unfiltered_plot,) = ax_vel.plot([], [], "r--", linewidth=1.5, label="Angular velocity (wz) unfiltered", alpha=0.3)
     ax_vel.legend()
     ax_vel.grid(True, alpha=0.3)
     
     # Set velocity plot limits
     ax_vel.set_xlim(0, time_steps[-1])
-    vx_margin = 0.1 * (max(vx_cmds) - min(vx_cmds)) if vx_cmds else 0.1
-    wz_margin = 0.1 * (max(wz_cmds) - min(wz_cmds)) if wz_cmds else 0.1
-    ax_vel.set_ylim(min(min(vx_cmds) - vx_margin, min(wz_cmds) - wz_margin), 
-                    max(max(vx_cmds) + vx_margin, max(wz_cmds) + wz_margin))
+    all_vx = vx_cmds + vx_unfiltered
+    all_wz = wz_cmds + wz_unfiltered
+    vx_margin = 0.1 * (max(all_vx) - min(all_vx)) if all_vx else 0.1
+    wz_margin = 0.1 * (max(all_wz) - min(all_wz)) if all_wz else 0.1
+    ax_vel.set_ylim(min(min(all_vx) - vx_margin, min(all_wz) - wz_margin), 
+                    max(max(all_vx) + vx_margin, max(all_wz) + wz_margin))
 
     # Set up steering angle subplot
     ax_steering.set_title("Steering Wheel Angle")
     ax_steering.set_xlabel("Time [s]")
     ax_steering.set_ylabel("Steering Angle [rad]")
     
-    (steering_plot,) = ax_steering.plot([], [], "g-", linewidth=2, label="Steering angle", alpha=0.8)
+    # Calculate unfiltered steering angles from unfiltered control sequences
+    steering_angles_unfiltered = []
+    for i in range(len(control_sequences_before_filter)):
+        if len(control_sequences_before_filter[i]) > 0 and len(control_sequences_wz_before_filter[i]) > 0:
+            vx_unf = control_sequences_before_filter[i][0]
+            wz_unf = control_sequences_wz_before_filter[i][0]
+            steering_angle_unf = math.atan(0.5 * wz_unf / vx_unf) if abs(vx_unf) > 0.01 else 0.0
+            steering_angles_unfiltered.append(steering_angle_unf)
+        else:
+            steering_angles_unfiltered.append(0.0)
+    
+    (steering_plot,) = ax_steering.plot([], [], "g-", linewidth=2, label="Steering angle filtered", alpha=0.7)
+    (steering_unfiltered_plot,) = ax_steering.plot([], [], "g--", linewidth=1.5, label="Steering angle unfiltered", alpha=0.3)
     ax_steering.legend()
     ax_steering.grid(True, alpha=0.3)
     
     # Set steering angle plot limits
     ax_steering.set_xlim(0, time_steps[-1])
-    steering_margin = 0.1 * (max(steering_angles) - min(steering_angles)) if steering_angles else 0.1
-    ax_steering.set_ylim(min(steering_angles) - steering_margin, max(steering_angles) + steering_margin)
-
-    # Set up filter comparison subplots
-    ax_filter_vx.set_title("Control Sequence vx: Before vs After Filter")
-    ax_filter_vx.set_xlabel("Time Step in Horizon")
-    ax_filter_vx.set_ylabel("vx [m/s]")
-    ax_filter_vx.grid(True, alpha=0.3)
-    
-    ax_filter_wz.set_title("Control Sequence wz: Before vs After Filter")
-    ax_filter_wz.set_xlabel("Time Step in Horizon")
-    ax_filter_wz.set_ylabel("wz [rad/s]")
-    ax_filter_wz.grid(True, alpha=0.3)
-
-    # Initialize filter comparison plots
-    (filter_vx_before_plot,) = ax_filter_vx.plot([], [], "r-", linewidth=1.5, label="Before filter", alpha=0.7)
-    (filter_vx_after_plot,) = ax_filter_vx.plot([], [], "b-", linewidth=1.5, label="After filter", alpha=0.7)
-    ax_filter_vx.legend()
-    
-    (filter_wz_before_plot,) = ax_filter_wz.plot([], [], "r-", linewidth=1.5, label="Before filter", alpha=0.7)
-    (filter_wz_after_plot,) = ax_filter_wz.plot([], [], "b-", linewidth=1.5, label="After filter", alpha=0.7)
-    ax_filter_wz.legend()
+    all_steering = steering_angles + steering_angles_unfiltered
+    steering_margin = 0.1 * (max(all_steering) - min(all_steering)) if all_steering else 0.1
+    ax_steering.set_ylim(min(all_steering) - steering_margin, max(all_steering) + steering_margin)
     
     def init():
         robot_path_plot.set_data([], [])
@@ -383,15 +382,14 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         nearest_point_plot.set_data([], [])
         vx_plot.set_data([], [])
         wz_plot.set_data([], [])
+        vx_unfiltered_plot.set_data([], [])
+        wz_unfiltered_plot.set_data([], [])
         steering_plot.set_data([], [])
-        filter_vx_before_plot.set_data([], [])
-        filter_vx_after_plot.set_data([], [])
-        filter_wz_before_plot.set_data([], [])
-        filter_wz_after_plot.set_data([], [])
+        steering_unfiltered_plot.set_data([], [])
         car_elements = car_visualizer.update_plot(0, 0, 0, 0)
         return [robot_path_plot, predicted_path_plot, plan_window_plot, nearest_point_plot, 
-                vx_plot, wz_plot, steering_plot, filter_vx_before_plot, filter_vx_after_plot,
-                filter_wz_before_plot, filter_wz_after_plot] + car_elements
+                vx_plot, wz_plot, vx_unfiltered_plot, wz_unfiltered_plot,
+                steering_plot, steering_unfiltered_plot] + car_elements
 
     def update(frame):
         robot_path_plot.set_data(positions[: frame + 1, 0], positions[: frame + 1, 1])
@@ -412,44 +410,12 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         current_time = time_steps[:frame + 1]
         vx_plot.set_data(current_time, vx_cmds[:frame + 1])
         wz_plot.set_data(current_time, wz_cmds[:frame + 1])
+        vx_unfiltered_plot.set_data(current_time, vx_unfiltered[:frame + 1])
+        wz_unfiltered_plot.set_data(current_time, wz_unfiltered[:frame + 1])
         
         # Update steering angle plot
         steering_plot.set_data(current_time, steering_angles[:frame + 1])
-        
-        # Update filter comparison plots
-        if frame < len(control_sequences_before_filter) and frame < len(control_sequences_after_filter):
-            seq_before_vx = control_sequences_before_filter[frame]
-            seq_after_vx = control_sequences_after_filter[frame]
-            seq_before_wz = control_sequences_wz_before_filter[frame]
-            seq_after_wz = control_sequences_wz_after_filter[frame]
-            
-            if len(seq_before_vx) > 0 and len(seq_after_vx) > 0:
-                time_steps_horizon = np.arange(len(seq_after_vx))
-                filter_vx_before_plot.set_data(time_steps_horizon, seq_before_vx)
-                filter_vx_after_plot.set_data(time_steps_horizon, seq_after_vx)
-                
-                # Update axis limits for vx
-                vx_min = min(seq_before_vx.min() if len(seq_before_vx) > 0 else 0, 
-                            seq_after_vx.min() if len(seq_after_vx) > 0 else 0)
-                vx_max = max(seq_before_vx.max() if len(seq_before_vx) > 0 else 0, 
-                            seq_after_vx.max() if len(seq_after_vx) > 0 else 0)
-                if vx_max > vx_min:
-                    ax_filter_vx.set_xlim(0, len(seq_after_vx) - 1)
-                    ax_filter_vx.set_ylim(vx_min - 0.1, vx_max + 0.1)
-                
-            if len(seq_before_wz) > 0 and len(seq_after_wz) > 0:
-                time_steps_horizon = np.arange(len(seq_after_wz))
-                filter_wz_before_plot.set_data(time_steps_horizon, seq_before_wz)
-                filter_wz_after_plot.set_data(time_steps_horizon, seq_after_wz)
-                
-                # Update axis limits for wz
-                wz_min = min(seq_before_wz.min() if len(seq_before_wz) > 0 else 0, 
-                            seq_after_wz.min() if len(seq_after_wz) > 0 else 0)
-                wz_max = max(seq_before_wz.max() if len(seq_before_wz) > 0 else 0, 
-                            seq_after_wz.max() if len(seq_after_wz) > 0 else 0)
-                if wz_max > wz_min:
-                    ax_filter_wz.set_xlim(0, len(seq_after_wz) - 1)
-                    ax_filter_wz.set_ylim(wz_min - 0.1, wz_max + 0.1)
+        steering_unfiltered_plot.set_data(current_time, steering_angles_unfiltered[:frame + 1])
         
         x = positions[frame, 0]
         y = positions[frame, 1]
@@ -457,8 +423,8 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         steering_angle = steering_angles[frame] if frame < len(steering_angles) else 0.0
         car_elements = car_visualizer.update_plot(x, y, yaw, steering_angle)
         return [robot_path_plot, predicted_path_plot, plan_window_plot, nearest_point_plot, 
-                vx_plot, wz_plot, steering_plot, filter_vx_before_plot, filter_vx_after_plot,
-                filter_wz_before_plot, filter_wz_after_plot] + car_elements
+                vx_plot, wz_plot, vx_unfiltered_plot, wz_unfiltered_plot,
+                steering_plot, steering_unfiltered_plot] + car_elements
 
     ani = animation.FuncAnimation(
         fig,
