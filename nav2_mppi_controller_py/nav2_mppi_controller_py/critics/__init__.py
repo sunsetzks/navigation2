@@ -9,6 +9,9 @@ from .path_follow import PathFollowCritic
 from .prefer_forward import PreferForwardCritic
 from .twirling import TwirlingCritic
 from .velocity_deadband import VelocityDeadbandCritic
+from .acceleration_rate import AccelerationRateCritic
+from .jerk import JerkCritic
+from .steering_rate import SteeringRateCritic
 
 __all__ = [
     "CriticFunction",
@@ -22,4 +25,7 @@ __all__ = [
     "PreferForwardCritic",
     "TwirlingCritic",
     "VelocityDeadbandCritic",
+    "AccelerationRateCritic",
+    "JerkCritic",
+    "SteeringRateCritic",
 ]

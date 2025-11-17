@@ -181,21 +181,31 @@ class Optimizer:
             s.control_sequence.reset(time_steps)
 
     def _generate_rollouts(self) -> None:
-        self.noise_generator.sample()
         s = self.opt_state
         settings = self.settings
 
+        # Generate noise for current iteration (like C++ sample before setNoisedControls)
+        self.noise_generator.sample()
+        
+        # Set noised controls (like C++ setNoisedControls)
         self.noise_generator.set_noised_controls(s.state, s.control_sequence)
+        
+        # Trigger next iteration's noise generation (like C++ generateNextNoises)
+        self.noise_generator.generate_next_noises()
 
-        # Ensure first step matches current speed
-        s.state.cvx[:, 0] = s.state.speed.linear.x
-        s.state.cwz[:, 0] = s.state.speed.angular.z
+        # Set initial state velocities from current robot speed (like C++ updateInitialStateVelocities)
+        s.state.vx[:, 0] = s.state.speed.linear.x
+        s.state.wz[:, 0] = s.state.speed.angular.z
         if self.motion_model.is_holonomic():
-            s.state.cvy[:, 0] = s.state.speed.linear.y
-        else:
-            s.state.cvy[:, :] = 0.0
+            s.state.vy[:, 0] = s.state.speed.linear.y
 
+        # Apply constraints to commanded velocities
         self._apply_constraints(s.state.cvx, s.state.cvy, s.state.cwz)
+
+        # Propagate state velocities from commanded velocities using motion model (like C++ predict)
+        self.motion_model.predict(s.state)
+
+        # Integrate trajectories using state velocities
         self._propagate_trajectories()
         s.generated = s.trajectories
 
@@ -213,29 +223,31 @@ class Optimizer:
         dt = self.settings.model_dt
 
         pose = s.state.pose
-        x = np.full(batch, pose.position.x, dtype=np.float32)
-        y = np.full(batch, pose.position.y, dtype=np.float32)
-        yaw = np.full(batch, yaw_from_quaternion(pose.orientation), dtype=np.float32)
+        initial_yaw = yaw_from_quaternion(pose.orientation)
 
-        s.trajectories.x[:, 0] = x
-        s.trajectories.y[:, 0] = y
-        s.trajectories.yaws[:, 0] = yaw
+        # Compute yaws using cumsum (like C++ version)
+        s.trajectories.yaws = np.cumsum(s.state.wz * dt, axis=1) + initial_yaw
 
-        for t in range(1, time_steps):
-            vx = s.state.cvx[:, t - 1]
-            vy = s.state.cvy[:, t - 1]
-            wz = s.state.cwz[:, t - 1]
+        # Use previous yaw for cos/sin calculation (like C++ yaws_cutted)
+        # C++ uses yaws[range(0, -1)] for cos/sin, which means yaw at t-1 is used for integration at t
+        yaws_for_cos_sin = np.zeros_like(s.trajectories.yaws)
+        yaws_for_cos_sin[:, 0] = initial_yaw
+        yaws_for_cos_sin[:, 1:] = s.trajectories.yaws[:, :-1]
 
-            yaw = yaw + wz * dt
-            cos_yaw = np.cos(yaw)
-            sin_yaw = np.sin(yaw)
+        yaw_cos = np.cos(yaws_for_cos_sin)
+        yaw_sin = np.sin(yaws_for_cos_sin)
 
-            x = x + (vx * cos_yaw - vy * sin_yaw) * dt
-            y = y + (vx * sin_yaw + vy * cos_yaw) * dt
+        # Compute dx and dy using state velocities (like C++ version)
+        dx = s.state.vx * yaw_cos
+        dy = s.state.vx * yaw_sin
 
-            s.trajectories.x[:, t] = x
-            s.trajectories.y[:, t] = y
-            s.trajectories.yaws[:, t] = yaw
+        if self.motion_model.is_holonomic():
+            dx = dx - s.state.vy * yaw_sin
+            dy = dy + s.state.vy * yaw_cos
+
+        # Integrate positions using cumsum (like C++ version)
+        s.trajectories.x = pose.position.x + np.cumsum(dx * dt, axis=1)
+        s.trajectories.y = pose.position.y + np.cumsum(dy * dt, axis=1)
 
     def _score_rollouts(self) -> None:
         s = self.opt_state
@@ -271,34 +283,25 @@ class Optimizer:
         bounded_noises_vx = s.state.cvx - s.control_sequence.vx
         bounded_noises_wz = s.state.cwz - s.control_sequence.wz
 
-        # Add gamma cost term for control noise penalty
-        if settings.gamma > 0:
-            gamma_cost_vx = (
-                settings.gamma
-                / (settings.sampling_std.vx * settings.sampling_std.vx)
-                * np.sum(
-                    s.control_sequence.vx[None, :] * bounded_noises_vx, axis=1
-                )
-            )
-            gamma_cost_wz = (
-                settings.gamma
-                / (settings.sampling_std.wz * settings.sampling_std.wz)
-                * np.sum(
-                    s.control_sequence.wz[None, :] * bounded_noises_wz, axis=1
-                )
-            )
-            s.costs += gamma_cost_vx + gamma_cost_wz
+        # Add gamma cost term for control noise penalty (unconditional like C++ version)
+        s.costs += (
+            settings.gamma
+            / (settings.sampling_std.vx * settings.sampling_std.vx)
+            * np.sum(s.control_sequence.vx[None, :] * bounded_noises_vx, axis=1)
+        )
+        s.costs += (
+            settings.gamma
+            / (settings.sampling_std.wz * settings.sampling_std.wz)
+            * np.sum(s.control_sequence.wz[None, :] * bounded_noises_wz, axis=1)
+        )
 
-            if self.motion_model.is_holonomic():
-                bounded_noises_vy = s.state.cvy - s.control_sequence.vy
-                gamma_cost_vy = (
-                    settings.gamma
-                    / (settings.sampling_std.vy * settings.sampling_std.vy)
-                    * np.sum(
-                        s.control_sequence.vy[None, :] * bounded_noises_vy, axis=1
-                    )
-                )
-                s.costs += gamma_cost_vy
+        if self.motion_model.is_holonomic():
+            bounded_noises_vy = s.state.cvy - s.control_sequence.vy
+            s.costs += (
+                settings.gamma
+                / (settings.sampling_std.vy * settings.sampling_std.vy)
+                * np.sum(s.control_sequence.vy[None, :] * bounded_noises_vy, axis=1)
+            )
 
         # Calculate softmax weights
         temperature = max(settings.temperature, 1e-5)
@@ -312,8 +315,7 @@ class Optimizer:
 
         if self.motion_model.is_holonomic():
             s.control_sequence.vy = np.sum(s.state.cvy * softmaxes[:, None], axis=0)
-        else:
-            s.control_sequence.vy.fill(0.0)
+        # Note: C++ version doesn't explicitly set vy to 0 for non-holonomic, it just doesn't update it
 
         # Apply constraints (including motion model constraints)
         self._apply_constraints(
