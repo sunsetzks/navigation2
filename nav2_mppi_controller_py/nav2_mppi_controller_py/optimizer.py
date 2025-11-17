@@ -117,6 +117,13 @@ class Optimizer:
             self._score_rollouts()
             self._update_control_sequence()
 
+        # Apply Savitzky-Golay filter after all iterations are complete
+        utils.savitsky_golay_filter(
+            self.opt_state.control_sequence,
+            self.opt_state.control_history,
+            self.settings,
+        )
+
         if self.settings.shift_control_sequence:
             self._shift_control_sequence()
 
@@ -243,32 +250,64 @@ class Optimizer:
 
     def _update_control_sequence(self) -> None:
         s = self.opt_state
-        temperature = max(self.settings.temperature, 1e-5)
-        costs = s.costs
-        min_cost = np.min(costs)
-        weights = np.exp(-(costs - min_cost) / temperature)
-        weight_sum = np.sum(weights) + 1e-9
-        weights /= weight_sum
+        settings = self.settings
 
-        noises_vx = self.noise_generator.noises_vx
-        noises_vy = self.noise_generator.noises_vy
-        noises_wz = self.noise_generator.noises_wz
+        # Calculate bounded noises (control differences)
+        bounded_noises_vx = s.state.cvx - s.control_sequence.vx
+        bounded_noises_wz = s.state.cwz - s.control_sequence.wz
 
-        s.control_sequence.vx += np.sum(weights[:, None] * noises_vx, axis=0)
-        s.control_sequence.wz += np.sum(weights[:, None] * noises_wz, axis=0)
+        # Add gamma cost term for control noise penalty
+        if settings.gamma > 0:
+            gamma_cost_vx = (
+                settings.gamma
+                / (settings.sampling_std.vx * settings.sampling_std.vx)
+                * np.sum(
+                    s.control_sequence.vx[None, :] * bounded_noises_vx, axis=1
+                )
+            )
+            gamma_cost_wz = (
+                settings.gamma
+                / (settings.sampling_std.wz * settings.sampling_std.wz)
+                * np.sum(
+                    s.control_sequence.wz[None, :] * bounded_noises_wz, axis=1
+                )
+            )
+            s.costs += gamma_cost_vx + gamma_cost_wz
+
+            if self.motion_model.is_holonomic():
+                bounded_noises_vy = s.state.cvy - s.control_sequence.vy
+                gamma_cost_vy = (
+                    settings.gamma
+                    / (settings.sampling_std.vy * settings.sampling_std.vy)
+                    * np.sum(
+                        s.control_sequence.vy[None, :] * bounded_noises_vy, axis=1
+                    )
+                )
+                s.costs += gamma_cost_vy
+
+        # Calculate softmax weights
+        temperature = max(settings.temperature, 1e-5)
+        costs_normalized = s.costs - np.min(s.costs)
+        exponents = np.exp(-1.0 / temperature * costs_normalized)
+        softmaxes = exponents / (np.sum(exponents) + 1e-9)
+
+        # Update control sequence using weighted average (like C++ version)
+        s.control_sequence.vx = np.sum(s.state.cvx * softmaxes[:, None], axis=0)
+        s.control_sequence.wz = np.sum(s.state.cwz * softmaxes[:, None], axis=0)
 
         if self.motion_model.is_holonomic():
-            s.control_sequence.vy += np.sum(weights[:, None] * noises_vy, axis=0)
+            s.control_sequence.vy = np.sum(s.state.cvy * softmaxes[:, None], axis=0)
         else:
             s.control_sequence.vy.fill(0.0)
 
+        # Apply constraints (including motion model constraints)
         self._apply_constraints(
             s.control_sequence.vx[None, :],
             s.control_sequence.vy[None, :],
             s.control_sequence.wz[None, :],
         )
-
-        utils.savitsky_golay_filter(s.control_sequence, s.control_history, self.settings)
+        # Apply motion model specific constraints (e.g., Ackermann turning radius)
+        self.motion_model.apply_constraints(s.control_sequence)
 
     def _shift_control_sequence(self) -> None:
         seq = self.opt_state.control_sequence
@@ -278,4 +317,8 @@ class Optimizer:
 
     def _control_from_sequence(self) -> TwistStamped:
         seq = self.opt_state.control_sequence
-        return utils.to_twist_stamped(seq.vx[0], seq.vy[0], seq.wz[0], frame="base_link")
+        # Use offset=1 if shift_control_sequence is enabled (like C++ version)
+        offset = 1 if self.settings.shift_control_sequence else 0
+        return utils.to_twist_stamped(
+            seq.vx[offset], seq.vy[offset], seq.wz[offset], frame="base_link"
+        )

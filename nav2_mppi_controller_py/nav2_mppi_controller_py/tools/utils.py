@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Iterable, List, Sequence
+from typing import Iterable, List, Optional, Sequence
 
 import numpy as np
 
@@ -23,6 +23,7 @@ from ..messages import (
     yaw_from_quaternion,
 )
 from ..models import Control, ControlSequence, OptimizerSettings, Path as PathTensor
+from ..critic_data import CriticData
 
 
 def create_pose(x: float, y: float, z: float = 0.0, yaw: float = 0.0) -> Pose:
@@ -240,3 +241,171 @@ def goal_distance(goal: Pose, position: np.ndarray) -> np.ndarray:
     dx = position[:, 0] - goal.position.x
     dy = position[:, 1] - goal.position.y
     return np.hypot(dx, dy)
+
+
+def within_position_goal_tolerance(
+    goal_checker: Optional["GoalChecker"], robot: Pose, goal: Pose
+) -> bool:
+    """Check if the robot pose is within the Goal Checker's tolerances to goal."""
+    if goal_checker is not None:
+        from ..messages import Pose as PoseMsg, Twist
+
+        pose_tolerance = PoseMsg()
+        velocity_tolerance = Twist()
+        goal_checker.get_tolerances(pose_tolerance, velocity_tolerance)
+
+        pose_tolerance_sq = pose_tolerance.position.x * pose_tolerance.position.x
+
+        dx = robot.position.x - goal.position.x
+        dy = robot.position.y - goal.position.y
+
+        dist_sq = dx * dx + dy * dy
+
+        if dist_sq < pose_tolerance_sq:
+            return True
+
+    return False
+
+
+def within_position_goal_tolerance_scalar(
+    pose_tolerance: float, robot: Pose, goal: Pose
+) -> bool:
+    """Check if the robot pose is within tolerance to the goal."""
+    dist_sq = (goal.position.x - robot.position.x) ** 2 + (goal.position.y - robot.position.y) ** 2
+
+    pose_tolerance_sq = pose_tolerance * pose_tolerance
+
+    if dist_sq < pose_tolerance_sq:
+        return True
+
+    return False
+
+
+def find_path_furthest_reached_point(data: CriticData) -> int:
+    """Evaluate furthest point idx of data.path which is nearest to some trajectory in data.trajectories."""
+    traj_x = data.trajectories.x[:, -1:]  # Shape: (batch_size, 1)
+    traj_y = data.trajectories.y[:, -1:]  # Shape: (batch_size, 1)
+
+    # Broadcast to compute distances
+    dx = data.path.x - traj_x  # Shape: (batch_size, path_length)
+    dy = data.path.y - traj_y  # Shape: (batch_size, path_length)
+
+    dists = dx * dx + dy * dy  # Shape: (batch_size, path_length)
+
+    max_id_by_trajectories = 0
+    min_distance_by_path = float("inf")
+
+    for i in range(dists.shape[0]):  # For each trajectory
+        min_id_by_path = 0
+        min_distance_by_path = float("inf")
+        for j in range(dists.shape[1]):  # For each path point
+            cur_dist = dists[i, j]
+            if cur_dist < min_distance_by_path:
+                min_distance_by_path = cur_dist
+                min_id_by_path = j
+        max_id_by_trajectories = max(max_id_by_trajectories, min_id_by_path)
+
+    return max_id_by_trajectories
+
+
+def find_path_trajectory_initial_point(data: CriticData) -> int:
+    """Evaluate closest point idx of data.path which is nearest to the start of the trajectory in data.trajectories."""
+    # First point should be the same for all trajectories from initial conditions
+    dx = data.path.x - data.trajectories.x[0, 0]
+    dy = data.path.y - data.trajectories.y[0, 0]
+    dists = dx * dx + dy * dy
+
+    min_distance_by_path = float("inf")
+    min_id = 0
+    for j in range(len(dists)):
+        if dists[j] < min_distance_by_path:
+            min_distance_by_path = dists[j]
+            min_id = j
+
+    return min_id
+
+
+def set_path_furthest_point_if_not_set(data: CriticData) -> None:
+    """Evaluate path furthest point if it is not set."""
+    if data.furthest_reached_path_point is None:
+        data.furthest_reached_path_point = find_path_furthest_reached_point(data)
+
+
+def pose_point_angle(pose: Pose, point_x: float, point_y: float, forward_preference: bool) -> float:
+    """Evaluate angle from pose (have angle) to point (no angle)."""
+    pose_x = pose.position.x
+    pose_y = pose.position.y
+    pose_yaw = yaw_from_quaternion(pose.orientation)
+
+    yaw = math.atan2(point_y - pose_y, point_x - pose_x)
+
+    # If no preference for forward, return smallest angle either in heading or 180 of heading
+    if not forward_preference:
+        angle1 = abs(normalize_angle(yaw - pose_yaw))
+        angle2 = abs(normalize_angle(yaw - normalize_angle(pose_yaw + math.pi)))
+        return min(angle1, angle2)
+
+    return abs(normalize_angle(yaw - pose_yaw))
+
+
+def find_closest_path_pt(
+    vec: List[float] | np.ndarray, dist: float, init: int = 0
+) -> int:
+    """Compare to trajectory points to find closest path point along integrated distances."""
+    vec_array = np.asarray(vec)
+    if init >= len(vec_array) or len(vec_array) == 0:
+        return 0
+
+    # Find the insertion point using binary search
+    search_vec = vec_array[init:]
+    if len(search_vec) == 0:
+        return 0
+
+    idx = np.searchsorted(search_vec, dist)
+
+    if idx == 0:
+        # TODO/FIXME: Current behavior returns 0 when idx equals init.
+        # This is incorrect when init > 0 — it should return init.
+        return 0
+
+    if idx >= len(search_vec):
+        # Handle case where dist is beyond the last element
+        return len(vec_array) - 1
+
+    # Check which point is closer
+    if dist - search_vec[idx - 1] < search_vec[idx] - dist:
+        return init + idx - 1
+    return init + idx
+
+
+def find_first_path_inversion(path: Path) -> int:
+    """Find the iterator of the first pose at which there is an inversion on the path."""
+    # At least 3 poses for a possible inversion
+    if len(path.poses) < 3:
+        return len(path.poses)
+
+    # Iterating through the path to determine the position of the path inversion
+    for idx in range(1, len(path.poses) - 1):
+        # We have two vectors for the dot product OA and AB. Determining the vectors.
+        oa_x = path.poses[idx].pose.position.x - path.poses[idx - 1].pose.position.x
+        oa_y = path.poses[idx].pose.position.y - path.poses[idx - 1].pose.position.y
+        ab_x = path.poses[idx + 1].pose.position.x - path.poses[idx].pose.position.x
+        ab_y = path.poses[idx + 1].pose.position.y - path.poses[idx].pose.position.y
+
+        # Checking for the existence of cusp, in the path, using the dot product.
+        dot_product = oa_x * ab_x + oa_y * ab_y
+        if dot_product < 0.0:
+            return idx + 1
+
+    return len(path.poses)
+
+
+def remove_poses_after_first_inversion(path: Path) -> int:
+    """Find and remove poses after the first inversion in the path."""
+    first_after_inversion = find_first_path_inversion(path)
+    if first_after_inversion == len(path.poses):
+        return 0
+
+    # Remove poses after the inversion
+    path.poses = path.poses[:first_after_inversion]
+    return first_after_inversion

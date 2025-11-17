@@ -55,6 +55,10 @@ class AckermannMotionModel(MotionModel):
                 self.min_turning_radius, 1e-6
             )
 
+    def get_min_turning_radius(self) -> float:
+        """Get minimum turning radius of ackermann drive."""
+        return self.min_turning_radius
+
 
 class DiffDriveMotionModel(MotionModel):
     """Differential drive model (non-holonomic)."""
