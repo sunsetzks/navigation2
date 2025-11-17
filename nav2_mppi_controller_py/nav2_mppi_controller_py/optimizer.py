@@ -83,6 +83,7 @@ class Optimizer:
         self._optimized_index = 0
         self._path_sample_indices = np.zeros(time_steps, dtype=np.int32)
         self._goal_pose = Pose()
+        self._control_sequence_before_filter: Optional[ControlSequence] = None
 
     def reset(self) -> None:
         self._init_internal_state()
@@ -117,6 +118,12 @@ class Optimizer:
             self._score_rollouts()
             self._update_control_sequence()
 
+        # Save control sequence before filtering
+        self._control_sequence_before_filter = ControlSequence()
+        self._control_sequence_before_filter.vx = self.opt_state.control_sequence.vx.copy()
+        self._control_sequence_before_filter.vy = self.opt_state.control_sequence.vy.copy()
+        self._control_sequence_before_filter.wz = self.opt_state.control_sequence.wz.copy()
+
         # Apply Savitzky-Golay filter after all iterations are complete
         utils.savitsky_golay_filter(
             self.opt_state.control_sequence,
@@ -143,6 +150,14 @@ class Optimizer:
             axis=1,
         )
         return traj
+
+    def get_control_sequence_before_filter(self) -> Optional[ControlSequence]:
+        """Get control sequence before filtering (for comparison)."""
+        return self._control_sequence_before_filter
+
+    def get_control_sequence_after_filter(self) -> ControlSequence:
+        """Get control sequence after filtering."""
+        return self.opt_state.control_sequence
 
     # Internal helpers -----------------------------------------------------
 

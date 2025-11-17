@@ -54,7 +54,7 @@ def create_settings(
     return settings
 
 
-def prune_path(plan, pose: Pose, look_ahead: int, dt: float = 0.05, v_ref: float = 0.5) -> object:
+def prune_path(plan, pose: Pose, look_ahead: float, dt: float = 0.05, v_ref: float = 0.5):
     """Return a pruned copy of the plan keeping poses within a time horizon ahead of the robot."""
     if not plan.poses:
         return plan
@@ -117,7 +117,7 @@ def simulate(
     path_ys: np.ndarray,
     v_ref: float = 0.5,
     horizon_steps: int = 40,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, list, list, list, list, list]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, list, list, list, list, list, list, list, list, list]:
     positions: list[Tuple[float, float]] = []
     headings: list[float] = []
     velocities: list[float] = []
@@ -126,11 +126,30 @@ def simulate(
     nearest_points: list[Tuple[float, float]] = []
     steering_angles: list[float] = []
     command_velocities: list[Tuple[float, float]] = []  # (vx_cmd, wz_cmd)
+    control_sequences_before_filter: list[np.ndarray] = []  # Store vx sequences before filter
+    control_sequences_after_filter: list[np.ndarray] = []  # Store vx sequences after filter
+    control_sequences_wz_before_filter: list[np.ndarray] = []  # Store wz sequences before filter
+    control_sequences_wz_after_filter: list[np.ndarray] = []  # Store wz sequences after filter
 
     for _ in range(steps):
         plan_window = prune_path(path, pose, look_ahead=look_ahead, dt=dt, v_ref=v_ref)
         controller.set_plan(plan_window)
         cmd = controller.compute_velocity_command(pose, twist)
+
+        # Get control sequences before and after filtering
+        optimizer = controller.optimizer
+        seq_before = optimizer.get_control_sequence_before_filter()
+        seq_after = optimizer.get_control_sequence_after_filter()
+        
+        if seq_before is not None:
+            control_sequences_before_filter.append(seq_before.vx.copy())
+            control_sequences_wz_before_filter.append(seq_before.wz.copy())
+        else:
+            control_sequences_before_filter.append(np.array([]))
+            control_sequences_wz_before_filter.append(np.array([]))
+        
+        control_sequences_after_filter.append(seq_after.vx.copy())
+        control_sequences_wz_after_filter.append(seq_after.wz.copy())
 
         vx = cmd.twist.linear.x
         wz = cmd.twist.angular.z
@@ -169,7 +188,10 @@ def simulate(
         # Store command velocities
         command_velocities.append((vx, wz))
 
-    return np.asarray(positions), np.asarray(headings), np.asarray(velocities), predicted_trajectories, plan_windows, nearest_points, steering_angles, command_velocities
+    return (np.asarray(positions), np.asarray(headings), np.asarray(velocities), 
+            predicted_trajectories, plan_windows, nearest_points, steering_angles, 
+            command_velocities, control_sequences_before_filter, control_sequences_after_filter,
+            control_sequences_wz_before_filter, control_sequences_wz_after_filter)
 
 
 def build_controller(settings: OptimizerSettings) -> MPPIController:
@@ -252,7 +274,10 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
 
     twist = Twist()
 
-    positions, headings, velocities, predicted_trajectories, plan_windows, nearest_points, steering_angles, command_velocities = simulate(
+    (positions, headings, velocities, predicted_trajectories, plan_windows, nearest_points, 
+     steering_angles, command_velocities, control_sequences_before_filter, 
+     control_sequences_after_filter, control_sequences_wz_before_filter, 
+     control_sequences_wz_after_filter) = simulate(
         controller,
         path,
         pose,
@@ -266,7 +291,13 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         horizon_steps=args.time_steps,
     )
 
-    fig, ((ax_main, ax_vel), (ax_steering, ax_empty)) = plt.subplots(2, 2, figsize=(14, 10))
+    fig = plt.figure(figsize=(16, 12))
+    gs = fig.add_gridspec(3, 2, hspace=0.3, wspace=0.3)
+    ax_main = fig.add_subplot(gs[0, :])
+    ax_vel = fig.add_subplot(gs[1, 0])
+    ax_steering = fig.add_subplot(gs[1, 1])
+    ax_filter_vx = fig.add_subplot(gs[2, 0])
+    ax_filter_wz = fig.add_subplot(gs[2, 1])
     ax = ax_main  # Keep ax as alias for backward compatibility
     ax.set_aspect("equal")
     ax.plot(xs, ys, "k--", label="Reference path", alpha=0.5)
@@ -325,9 +356,26 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
     steering_margin = 0.1 * (max(steering_angles) - min(steering_angles)) if steering_angles else 0.1
     ax_steering.set_ylim(min(steering_angles) - steering_margin, max(steering_angles) + steering_margin)
 
-    # Hide the empty subplot
-    ax_empty.axis('off')
+    # Set up filter comparison subplots
+    ax_filter_vx.set_title("Control Sequence vx: Before vs After Filter")
+    ax_filter_vx.set_xlabel("Time Step in Horizon")
+    ax_filter_vx.set_ylabel("vx [m/s]")
+    ax_filter_vx.grid(True, alpha=0.3)
+    
+    ax_filter_wz.set_title("Control Sequence wz: Before vs After Filter")
+    ax_filter_wz.set_xlabel("Time Step in Horizon")
+    ax_filter_wz.set_ylabel("wz [rad/s]")
+    ax_filter_wz.grid(True, alpha=0.3)
 
+    # Initialize filter comparison plots
+    (filter_vx_before_plot,) = ax_filter_vx.plot([], [], "r-", linewidth=1.5, label="Before filter", alpha=0.7)
+    (filter_vx_after_plot,) = ax_filter_vx.plot([], [], "b-", linewidth=1.5, label="After filter", alpha=0.7)
+    ax_filter_vx.legend()
+    
+    (filter_wz_before_plot,) = ax_filter_wz.plot([], [], "r-", linewidth=1.5, label="Before filter", alpha=0.7)
+    (filter_wz_after_plot,) = ax_filter_wz.plot([], [], "b-", linewidth=1.5, label="After filter", alpha=0.7)
+    ax_filter_wz.legend()
+    
     def init():
         robot_path_plot.set_data([], [])
         predicted_path_plot.set_data([], [])
@@ -336,8 +384,14 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         vx_plot.set_data([], [])
         wz_plot.set_data([], [])
         steering_plot.set_data([], [])
+        filter_vx_before_plot.set_data([], [])
+        filter_vx_after_plot.set_data([], [])
+        filter_wz_before_plot.set_data([], [])
+        filter_wz_after_plot.set_data([], [])
         car_elements = car_visualizer.update_plot(0, 0, 0, 0)
-        return [robot_path_plot, predicted_path_plot, plan_window_plot, nearest_point_plot, vx_plot, wz_plot, steering_plot] + car_elements
+        return [robot_path_plot, predicted_path_plot, plan_window_plot, nearest_point_plot, 
+                vx_plot, wz_plot, steering_plot, filter_vx_before_plot, filter_vx_after_plot,
+                filter_wz_before_plot, filter_wz_after_plot] + car_elements
 
     def update(frame):
         robot_path_plot.set_data(positions[: frame + 1, 0], positions[: frame + 1, 1])
@@ -362,12 +416,49 @@ def run_demo(argv: Iterable[str] | None = None) -> None:
         # Update steering angle plot
         steering_plot.set_data(current_time, steering_angles[:frame + 1])
         
+        # Update filter comparison plots
+        if frame < len(control_sequences_before_filter) and frame < len(control_sequences_after_filter):
+            seq_before_vx = control_sequences_before_filter[frame]
+            seq_after_vx = control_sequences_after_filter[frame]
+            seq_before_wz = control_sequences_wz_before_filter[frame]
+            seq_after_wz = control_sequences_wz_after_filter[frame]
+            
+            if len(seq_before_vx) > 0 and len(seq_after_vx) > 0:
+                time_steps_horizon = np.arange(len(seq_after_vx))
+                filter_vx_before_plot.set_data(time_steps_horizon, seq_before_vx)
+                filter_vx_after_plot.set_data(time_steps_horizon, seq_after_vx)
+                
+                # Update axis limits for vx
+                vx_min = min(seq_before_vx.min() if len(seq_before_vx) > 0 else 0, 
+                            seq_after_vx.min() if len(seq_after_vx) > 0 else 0)
+                vx_max = max(seq_before_vx.max() if len(seq_before_vx) > 0 else 0, 
+                            seq_after_vx.max() if len(seq_after_vx) > 0 else 0)
+                if vx_max > vx_min:
+                    ax_filter_vx.set_xlim(0, len(seq_after_vx) - 1)
+                    ax_filter_vx.set_ylim(vx_min - 0.1, vx_max + 0.1)
+                
+            if len(seq_before_wz) > 0 and len(seq_after_wz) > 0:
+                time_steps_horizon = np.arange(len(seq_after_wz))
+                filter_wz_before_plot.set_data(time_steps_horizon, seq_before_wz)
+                filter_wz_after_plot.set_data(time_steps_horizon, seq_after_wz)
+                
+                # Update axis limits for wz
+                wz_min = min(seq_before_wz.min() if len(seq_before_wz) > 0 else 0, 
+                            seq_after_wz.min() if len(seq_after_wz) > 0 else 0)
+                wz_max = max(seq_before_wz.max() if len(seq_before_wz) > 0 else 0, 
+                            seq_after_wz.max() if len(seq_after_wz) > 0 else 0)
+                if wz_max > wz_min:
+                    ax_filter_wz.set_xlim(0, len(seq_after_wz) - 1)
+                    ax_filter_wz.set_ylim(wz_min - 0.1, wz_max + 0.1)
+        
         x = positions[frame, 0]
         y = positions[frame, 1]
         yaw = float(headings[frame])
         steering_angle = steering_angles[frame] if frame < len(steering_angles) else 0.0
         car_elements = car_visualizer.update_plot(x, y, yaw, steering_angle)
-        return [robot_path_plot, predicted_path_plot, plan_window_plot, nearest_point_plot, vx_plot, wz_plot, steering_plot] + car_elements
+        return [robot_path_plot, predicted_path_plot, plan_window_plot, nearest_point_plot, 
+                vx_plot, wz_plot, steering_plot, filter_vx_before_plot, filter_vx_after_plot,
+                filter_wz_before_plot, filter_wz_after_plot] + car_elements
 
     ani = animation.FuncAnimation(
         fig,
